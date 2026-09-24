@@ -1,4 +1,4 @@
-"""Service: ptz_goto_preset.
+﻿"""Service: ptz_goto_preset.
 
 The service is registered in ``async_setup_entry`` only when the
 device reports PTZ capability. The service payload schema is

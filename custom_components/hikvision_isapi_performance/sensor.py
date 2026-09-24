@@ -1,4 +1,4 @@
-"""Sensor platform for Hikvision ISAPI.
+﻿"""Sensor platform for Hikvision ISAPI.
 
 Exposes device_info and system_status as sensors. The mapping is
 fixed in ``SENSORS`` — the user can rename / re-unit / hide any of

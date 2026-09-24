@@ -1,4 +1,4 @@
-"""Binary sensor platform for Hikvision ISAPI.
+﻿"""Binary sensor platform for Hikvision ISAPI.
 
 Three per-channel binary sensors are created for each detected channel:
 - ``channel_{N}_online`` — whether the channel is reachable
@@ -50,8 +50,8 @@ async def async_setup_entry(
     async_add_entities(entities)
 
     # Per-channel listener for late-arriving channels.
-    if not getattr(coordinator, "_hikvision_isapi_binary_added", False):
-        coordinator._hikvision_isapi_binary_added = False  # type: ignore[attr-defined]
+    if not getattr(coordinator, "_hikvision_isapi_performance_binary_added", False):
+        coordinator._hikvision_isapi_performance_binary_added = False  # type: ignore[attr-defined]
         coordinator.async_add_listener(
             _make_binary_listener(hass, entry, coordinator, async_add_entities)
         )
@@ -66,7 +66,7 @@ def _make_binary_listener(
     """Coordinator listener: add per-channel binary entities on late data."""
 
     async def _on_update() -> None:
-        if getattr(coordinator, "_hikvision_isapi_binary_added", False):
+        if getattr(coordinator, "_hikvision_isapi_performance_binary_added", False):
             return
         if coordinator.data is None:
             return
@@ -75,7 +75,7 @@ def _make_binary_listener(
             new_entities.extend(_entities_for_channel(coordinator, entry, ch))
         if not new_entities:
             return
-        coordinator._hikvision_isapi_binary_added = True  # type: ignore[attr-defined]
+        coordinator._hikvision_isapi_performance_binary_added = True  # type: ignore[attr-defined]
         async_add_entities(new_entities)
 
     return _on_update

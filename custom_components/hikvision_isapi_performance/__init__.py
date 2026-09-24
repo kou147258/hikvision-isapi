@@ -1,4 +1,4 @@
-"""Hikvision ISAPI integration entry point."""
+﻿"""Hikvision ISAPI integration entry point."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""DataUpdateCoordinator for the Hikvision ISAPI integration.
+﻿"""DataUpdateCoordinator for the Hikvision ISAPI integration.
 
 Polls the device's ``/ISAPI/System/deviceInfo`` and
 ``/ISAPI/System/status`` endpoints on a configurable interval. Each

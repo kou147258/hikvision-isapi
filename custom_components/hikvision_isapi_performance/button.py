@@ -1,4 +1,4 @@
-"""Button platform for Hikvision ISAPI.
+﻿"""Button platform for Hikvision ISAPI.
 
 One device-level button: ``Reboot Device``. Sends
 ``PUT /ISAPI/System/reboot``. The device reboots within ~30-60 s, during

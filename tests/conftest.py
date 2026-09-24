@@ -1,11 +1,20 @@
-"""Pytest config — stub homeassistant modules so unit tests can import the
+﻿"""Pytest config — stub homeassistant modules so unit tests can import the
 integration without a full HA install.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import types
+
+# Ensure the project root (where ``custom_components/`` lives) is on
+# sys.path so the test file's absolute imports work. Pytest's default
+# sys.path[0] is the tests/ directory; without this insert Python
+# can't find ``custom_components.<integration_domain>``.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 
 def _install_stub(name: str, attrs: dict[str, object] | None = None) -> None:

@@ -1,4 +1,4 @@
-"""Minimal async ISAPI client for Hikvision NVR / IPC.
+﻿"""Minimal async ISAPI client for Hikvision NVR / IPC.
 
 ISAPI is Hikvision's HTTP API on top of HTTP/1.1 + Digest auth + (optional)
 session cookies + (typically) self-signed TLS. This module wraps

@@ -1,4 +1,4 @@
-# Hikvision ISAPI
+# Hikvision ISAPI Performance
 
 <p align="right">
   🌐 <a href="#english"><b>English</b></a> · <a href="#简体中文">简体中文</a>
@@ -6,9 +6,26 @@
 
 <a name="english"></a>
 
-A Home Assistant custom integration for Hikvision NVRs and IP cameras over the **ISAPI HTTP API** — cameras (still snapshots), system sensors, per-channel recording switches, reboot button, and PTZ preset service.
+A Home Assistant custom integration for Hikvision NVRs and IP cameras over the **ISAPI HTTP API** — focused on **performance and health monitoring** (CPU / memory / uptime / reboot count / SD card write cycles / per-channel online + recording + motion / PTZ preset / reboot / recording on-off).
 
-Distinct from the [hikvision-snmp](https://github.com/kou147258/hikvision-snmp) integration which polls the SNMP MIB; this one talks to the same devices over ISAPI (Hikvision's HTTP API), which gives access to control surfaces (reboot, recording on/off, PTZ) and live snapshots that SNMP doesn't expose.
+> **v0.6.0 — integration renamed** from `hikvision_isapi` to
+> `hikvision_isapi_performance` (folder `custom_components/hikvision_isapi_performance/`,
+> manifest domain `hikvision_isapi_performance`, display name
+> "Hikvision ISAPI Performance") to disambiguate from
+> <https://github.com/JoshADC/hikvision_isapi>. Both can be
+> installed in HACS side-by-side without conflict.
+
+This is the **performance / monitoring** variant. The community
+`hikvision_isapi` integration at
+<https://github.com/JoshADC/hikvision_isapi> focuses on
+**image / PTZ control**; we focus on health / uptime / per-channel
+state.
+
+Distinct from the [hikvision-snmp](https://github.com/kou147258/hikvision-snmp)
+integration which polls the SNMP MIB; this one talks to the same
+devices over ISAPI (Hikvision's HTTP API), which gives access to
+control surfaces (reboot, recording on-off, PTZ) and live snapshots
+that SNMP doesn't expose.
 
 ## Features
 

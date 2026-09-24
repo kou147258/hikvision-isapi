@@ -1,4 +1,4 @@
-"""Config flow for Hikvision ISAPI."""
+﻿"""Config flow for Hikvision ISAPI."""
 
 from __future__ import annotations
 

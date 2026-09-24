@@ -1,4 +1,4 @@
-"""Camera platform for Hikvision ISAPI.
+﻿"""Camera platform for Hikvision ISAPI.
 
 Each detected channel becomes one ``Camera`` entity that streams a
 single JPEG request to HA's camera component. The HA frontend uses
@@ -65,8 +65,8 @@ async def async_setup_entry(
     ]
     async_add_entities(entities)
 
-    if not getattr(coordinator, "_hikvision_isapi_camera_added", False):
-        coordinator._hikvision_isapi_camera_added = False  # type: ignore[attr-defined]
+    if not getattr(coordinator, "_hikvision_isapi_performance_camera_added", False):
+        coordinator._hikvision_isapi_performance_camera_added = False  # type: ignore[attr-defined]
         coordinator.async_add_listener(
             _make_camera_listener(
                 hass, entry, coordinator, async_add_entities
@@ -81,7 +81,7 @@ def _make_camera_listener(
     async_add_entities: AddEntitiesCallback,
 ):
     async def _on_update() -> None:
-        if getattr(coordinator, "_hikvision_isapi_camera_added", False):
+        if getattr(coordinator, "_hikvision_isapi_performance_camera_added", False):
             return
         if coordinator.data is None:
             return
@@ -91,7 +91,7 @@ def _make_camera_listener(
         ]
         if not new_entities:
             return
-        coordinator._hikvision_isapi_camera_added = True  # type: ignore[attr-defined]
+        coordinator._hikvision_isapi_performance_camera_added = True  # type: ignore[attr-defined]
         async_add_entities(new_entities)
 
     return _on_update

@@ -1,10 +1,10 @@
-"""Constants for the Hikvision ISAPI integration."""
+﻿"""Constants for the Hikvision ISAPI integration."""
 
 from __future__ import annotations
 
 from typing import Final
 
-DOMAIN: Final = "hikvision_isapi"
+DOMAIN: Final = "hikvision_isapi_performance"
 MANUFACTURER: Final = "Hikvision"
 
 # ---- Polling defaults ----

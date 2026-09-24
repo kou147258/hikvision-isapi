@@ -1,4 +1,4 @@
-"""Switch platform for Hikvision ISAPI.
+﻿"""Switch platform for Hikvision ISAPI.
 
 One switch per channel that toggles recording on/off via
 ``/ISAPI/ContentMgmt/InputProxy/channels/{id}/capabilities?recording=On|Off``.
@@ -44,11 +44,11 @@ async def async_setup_entry(
     ]
     async_add_entities(entities)
 
-    if not getattr(coordinator, "_hikvision_isapi_switch_added", False):
-        coordinator._hikvision_isapi_switch_added = False  # type: ignore[attr-defined]
+    if not getattr(coordinator, "_hikvision_isapi_performance_switch_added", False):
+        coordinator._hikvision_isapi_performance_switch_added = False  # type: ignore[attr-defined]
 
         async def _on_update() -> None:
-            if getattr(coordinator, "_hikvision_isapi_switch_added", False):
+            if getattr(coordinator, "_hikvision_isapi_performance_switch_added", False):
                 return
             if coordinator.data is None:
                 return
@@ -58,7 +58,7 @@ async def async_setup_entry(
             ]
             if not new_entities:
                 return
-            coordinator._hikvision_isapi_switch_added = True  # type: ignore[attr-defined]
+            coordinator._hikvision_isapi_performance_switch_added = True  # type: ignore[attr-defined]
             async_add_entities(new_entities)
 
         coordinator.async_add_listener(_on_update)

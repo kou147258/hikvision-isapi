@@ -1,4 +1,4 @@
-"""Tests for ISAPI digest-auth parsing and coordinator XML extraction.
+﻿"""Tests for ISAPI digest-auth parsing and coordinator XML extraction.
 
 The actual HTTP client is a thin wrapper around aiohttp; we test
 the pure-Python parts (digest challenge parsing, digest response
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 
-from custom_components.hikvision_isapi.coordinator import (
+from custom_components.hikvision_isapi_performance.coordinator import (
     _parse_channel_status,
     _parse_channel_status_extended,
     _parse_channels,
@@ -21,7 +21,7 @@ from custom_components.hikvision_isapi.coordinator import (
     _parse_system_status,
     normalize_device_type,
 )
-from custom_components.hikvision_isapi.isapi_client import (
+from custom_components.hikvision_isapi_performance.isapi_client import (
     _build_digest_header,
     _compute_digest_response,
     _parse_digest_challenge,
