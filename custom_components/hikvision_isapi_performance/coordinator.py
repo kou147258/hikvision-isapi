@@ -556,8 +556,186 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
             timeout=DEFAULT_REQUEST_TIMEOUT,
         )
 
+    # ---- v0.6.14: per-endpoint fault-tolerant fetchers ----
+
+    async def _fetch_device_info(
+        self, client: ISAPIClient,
+    ) -> tuple[ET.Element | None, dict[str, str]]:
+        """``GET /ISAPI/System/deviceInfo``.
+
+        Returns (raw_xml, parsed_dict). On failure: raw_xml=None,
+        parsed_dict={}, with a WARNING log. Continues the refresh
+        without raising — if deviceInfo fails, every "model",
+        "firmware" etc. sensor shows "" but other endpoints'
+        data still makes it to HA.
+        """
+        try:
+            xml = await client.get_xml(ISAPI_SYSTEM_DEVICE_INFO)
+        except (ISAPIError, ISAPIAuthError, ISAPIConnectionError) as exc:
+            _LOGGER.warning(
+                "%s /ISAPI/System/deviceInfo failed: %s — refresh "
+                "continues with empty device_info",
+                self._host, exc,
+            )
+            return None, {}
+        return xml, _parse_device_info(xml)
+
+    async def _fetch_system_status(
+        self, client: ISAPIClient,
+    ) -> tuple[ET.Element | None, dict[str, str]]:
+        """``GET /ISAPI/System/status``.
+
+        V4 NVRs (DS-7708N-I4 / DS-8632-I8 firmware V4.1.x) frequently
+        return HTTP 404 for this endpoint. We catch it and continue
+        with the empty default; the "device status" / "CPU" /
+        "memory" sensors just show 0 / Unknown instead of taking
+        the whole refresh down.
+        """
+        try:
+            xml = await client.get_xml(ISAPI_SYSTEM_STATUS)
+        except (ISAPIError, ISAPIAuthError, ISAPIConnectionError) as exc:
+            level = (
+                _LOGGER.info if exc.__class__ is ISAPIError else _LOGGER.warning
+            )
+            level(
+                "%s /ISAPI/System/status failed: %s — refresh "
+                "continues with empty system_status",
+                self._host, exc,
+            )
+            return None, {
+                "deviceStatus": "Unknown",
+                "cpuUtilization": "0",
+                "memoryUsage": "0",
+                "memoryAvailable": "0",
+                "uptime": "0",
+                "rebootCount": None,
+                "cpuDescription": None,
+            }
+        return xml, _parse_system_status(xml)
+
+    async def _fetch_channels(
+        self,
+        client: ISAPIClient,
+        primary_path: str,
+        alt_path: str,
+    ) -> tuple[ET.Element | None, ET.Element | None, str | None]:
+        """Try primary channels endpoint, fall back to alt.
+
+        Returns (primary_xml, alt_xml, which_endpoint_won).
+        Either XML may be None; on full failure both are None
+        and the refresh continues with empty channels.
+        """
+        try:
+            primary = await client.get_xml(primary_path)
+            return primary, None, primary_path
+        except (ISAPIError, ISAPIAuthError, ISAPIConnectionError) as exc:
+            _LOGGER.info(
+                "%s channels primary %s failed (%s); trying %s",
+                self._host, primary_path, exc, alt_path,
+            )
+        try:
+            alt = await client.get_xml(alt_path)
+            return None, alt, alt_path
+        except (ISAPIError, ISAPIAuthError, ISAPIConnectionError) as exc:
+            _LOGGER.info(
+                "%s channels alt %s also failed (%s); channels "
+                "list will be empty",
+                self._host, alt_path, exc,
+            )
+            return None, None, None
+
+    async def _fetch_storage(
+        self, client: ISAPIClient,
+    ) -> ET.Element | None:
+        """``GET /ISAPI/ContentMgmt/storage``, fall back to
+        ``/ISAPI/System/Storage/hardDisks`` on V4.
+
+        Returns the parsed XML root or None. Storage failure is
+        typical (IPCs don't have storage), so DEBUG level is
+        appropriate when the primary returns 404.
+        """
+        try:
+            return await client.get_xml(ISAPI_CONTENT_MGMT_STORAGE)
+        except ISAPIError as exc:
+            if exc.status_code == 404:
+                # V4 NVR / DVR — fall back to legacy hardDisks.
+                try:
+                    return await client.get_xml(
+                        ISAPI_SYSTEM_STORAGE_HARDDISKS
+                    )
+                except ISAPIError as exc2:
+                    _LOGGER.info(
+                        "%s storage endpoints (ContentMgmt, "
+                        "System/Storage) both failed: %s",
+                        self._host, exc2,
+                    )
+                    return None
+            # Non-404 — also no storage.
+            _LOGGER.info(
+                "%s /ISAPI/ContentMgmt/storage failed: %s",
+                self._host, exc,
+            )
+            return None
+        except (ISAPIAuthError, ISAPIConnectionError) as exc:
+            _LOGGER.warning(
+                "%s /ISAPI/ContentMgmt/storage failed: %s",
+                self._host, exc,
+            )
+            return None
+
+    async def _fetch_network_interfaces(
+        self, client: ISAPIClient,
+    ) -> ET.Element | None:
+        try:
+            return await client.get_xml(ISAPI_SYSTEM_NETWORK_INTERFACES)
+        except (ISAPIError, ISAPIAuthError, ISAPIConnectionError) as exc:
+            _LOGGER.info(
+                "%s /ISAPI/System/Network/interfaces failed: %s",
+                self._host, exc,
+            )
+            return None
+
+    async def _fetch_streaming(
+        self, client: ISAPIClient,
+    ) -> ET.Element | None:
+        try:
+            return await client.get_xml(f"{ISAPI_STREAMING_CHANNELS}/1")
+        except (ISAPIError, ISAPIAuthError, ISAPIConnectionError) as exc:
+            _LOGGER.info(
+                "%s /ISAPI/Streaming/channels/1 failed: %s",
+                self._host, exc,
+            )
+            return None
+
     async def _async_update_data(self) -> HikvisionISAPIData:
         """One coordinator refresh: GET deviceInfo / status / channels / storage / network.
+
+        v0.6.14: every endpoint is fetched independently under its
+        own try/except. A single endpoint failure (HTTP 4xx, parse
+        error, network blip on a sub-fetch) logs at WARNING and is
+        recorded as "missing", but the entire refresh still returns
+        whatever data DID come through. Pre-v0.6.14 the outer
+        try/except would catch ISAPIError from any of the four main
+        endpoints and convert it to ``UpdateFailed``, marking ALL
+        entities for the device unavailable — even though half the
+        endpoints may have succeeded.
+
+        Specific cases this fixes:
+
+        - V4 NVRs / DVRs (DS-7708N-I4 / DS-8632-I8 firmware V4.x)
+          where ``/ISAPI/System/status`` returns HTTP 404 (V4
+          firmware often lacks the V5 ``DeviceStatus`` schema). v0.6.13
+          propagated that 404 → ``UpdateFailed`` → all entities
+          unavailable. v0.6.14 catches the 404 and continues with
+          empty status, so other endpoints' data still reaches the UI.
+        - IPCs where ``/Streaming/channels`` returns an empty list
+          because the IPC doesn't list its own videoInputChannel —
+          v0.6.14 returns an empty channels list (was working in
+          v0.6.13 but no INFO log to confirm).
+        - DS-7708-I4 V4 NVR's lack of ``/ContentMgmt/InputProxy``
+          endpoints: primary+alt both 404, coordinator still
+          completes the refresh with empty channels rather than
+          unavailable.
 
         v0.6.9: device-type-aware endpoint selection. The user has
         both IPCs (10.18.176.10, 10.18.176.65) and NVRs/DVRs
@@ -602,150 +780,95 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
             scheme, self._host, self._port, entry_id_hint(self),
         )
 
+        # All four endpoints are independently fault-tolerant.
+        # Each ``_fetch_*`` helper logs its own WARNING on failure
+        # and returns an empty/None result; the refresh continues.
         try:
             async with self._make_client() as client:
-                # Fetch deviceInfo first so we know which channel-list
-                # endpoint to query.
-                device_info_xml = await client.get_xml(ISAPI_SYSTEM_DEVICE_INFO)
-                status_xml = await client.get_xml(ISAPI_SYSTEM_STATUS)
-
-                device_info = _parse_device_info(device_info_xml)
-                device_type = normalize_device_type(
-                    device_info.get("deviceType", "")
-                )
-                # v0.6.12: log detected deviceType at INFO so the user
-                # can see which routing path we took. Pre-v0.6.12 this
-                # was DEBUG-only and the user thought "device type
-                # routing isn't working".
-                _LOGGER.info(
-                    "Detected %s at %s as deviceType=%r (routing channels "
-                    "endpoint to %s, per-channel status to %s)",
-                    device_info.get("model", "?"),
-                    self._host,
-                    device_info.get("deviceType", ""),
-                    ("/Streaming/channels" if device_type == DEVICE_TYPE_IPCAMERA
-                     else "/ContentMgmt/InputProxy/channels"),
-                    ("/Streaming/channels/{id}/status" if device_type == DEVICE_TYPE_IPCAMERA
-                     else "/ContentMgmt/InputProxy/channels/{id}/status"),
-                )
-
-                # Pick the right channel-list endpoint(s) for this
-                # device type. We try the "primary" first then fall
-                # back to the alternate in case of firmware that
-                # implements only one.
-                if device_type == DEVICE_TYPE_IPCAMERA:
-                    primary_channels = ISAPI_STREAMING_CHANNELS
-                    alt_channels = ISAPI_INPUT_PROXY_CHANNELS
-                    primary_status_fmt = ISAPI_STREAMING_CHANNELS_STATUS
-                    alt_status_fmt = ISAPI_INPUT_PROXY_CHANNELS_STATUS
-                else:
-                    # NVR or DVR
-                    primary_channels = ISAPI_INPUT_PROXY_CHANNELS
-                    alt_channels = ISAPI_STREAMING_CHANNELS
-                    primary_status_fmt = ISAPI_INPUT_PROXY_CHANNELS_STATUS
-                    alt_status_fmt = ISAPI_STREAMING_CHANNELS_STATUS
-
-                channels_xml: ET.Element | None = None
-                try:
-                    channels_xml = await client.get_xml(primary_channels)
-                except (ISAPIError, ISAPIAuthError) as exc:
-                    _LOGGER.debug(
-                        "Primary channels endpoint %s unavailable on "
-                        "%s (device_type=%s): %s — trying fallback %s",
-                        primary_channels, self._host, device_type,
-                        exc, alt_channels,
-                    )
-                    try:
-                        channels_xml = await client.get_xml(alt_channels)
-                    except (ISAPIError, ISAPIAuthError) as exc2:
-                        _LOGGER.debug(
-                            "Fallback channels endpoint %s also "
-                            "unavailable on %s: %s — continuing with "
-                            "empty channels list",
-                            alt_channels, self._host, exc2,
-                        )
-                # Best-effort — some devices (mostly small IPCs) don't
-                # implement these endpoints. We catch the ISAPIError so
-                # a missing endpoint doesn't take down the entire
-                # coordinator refresh.
-                storage_xml: ET.Element | None = None
-                try:
-                    storage_xml = await client.get_xml(
-                        ISAPI_CONTENT_MGMT_STORAGE
-                    )
-                except ISAPIError as exc:
-                    # Old V4 NVRs (DS-7708-I4, DS-8632-I8, etc.) don't
-                    # implement /ContentMgmt/storage. Fall back to the
-                    # legacy /System/Storage/hardDisks endpoint that
-                    # these firmwares do expose.
-                    if exc.status_code == 404:
-                        _LOGGER.debug(
-                            "ContentMgmt/storage not supported on %s, "
-                            "falling back to System/Storage/hardDisks",
-                            self._host,
-                        )
-                        try:
-                            storage_xml = await client.get_xml(
-                                ISAPI_SYSTEM_STORAGE_HARDDISKS
-                            )
-                        except ISAPIError as exc2:
-                            _LOGGER.debug(
-                                "System/Storage/hardDisks also unavailable "
-                                "on %s: %s",
-                                self._host, exc2,
-                            )
-                    else:
-                        _LOGGER.debug(
-                            "Storage endpoint unavailable on %s: %s",
-                            self._host, exc,
-                        )
-                network_xml: ET.Element | None = None
-                try:
-                    network_xml = await client.get_xml(
-                        ISAPI_SYSTEM_NETWORK_INTERFACES
-                    )
-                except ISAPIError as exc:
-                    _LOGGER.debug(
-                        "Network endpoint unavailable on %s: %s",
-                        self._host, exc,
-                    )
-                streaming_xml: ET.Element | None = None
-                try:
-                    streaming_xml = await client.get_xml(
-                        f"{ISAPI_STREAMING_CHANNELS}/1"
-                    )
-                except ISAPIError as exc:
-                    _LOGGER.debug(
-                        "Streaming endpoint unavailable on %s: %s",
-                        self._host, exc,
-                    )
+                device_info_xml, device_info = await self._fetch_device_info(client)
+                status_xml, system_status = await self._fetch_system_status(client)
         except ISAPIConnectionError as exc:
+            # The client itself couldn't be opened / connected at all.
+            # This is the only failure mode that warrants UpdateFailed —
+            # if we can't even hit the device, there's nothing useful
+            # to populate. Other endpoint failures are NOT fatal.
             raise UpdateFailed(
                 f"Network error talking to {self._host}: {exc}"
             ) from exc
         except ISAPIAuthError as exc:
+            # Auth failed for the very first request (no challenge
+            # even made it through); credentials are wrong or the
+            # user account lacks ISAPI access entirely. Definitely
+            # an UpdateFailed — there's no point polling if we
+            # can't authenticate.
             raise UpdateFailed(
                 f"Authentication failed for {self._host}: {exc}"
             ) from exc
-        except ISAPIError as exc:
-            raise UpdateFailed(
-                f"ISAPI error from {self._host}: {exc}"
-            ) from exc
 
-        device_info = _parse_device_info(device_info_xml)
-        system_status = _parse_system_status(status_xml)
-        # Parse channels based on which endpoint returned XML. The two
-        # endpoint response shapes (InputProxyChannel vs StreamingChannel)
-        # differ in wrapper / child element names; we pick the matching
-        # parser. The ``primary_channels`` endpoint tells us which shape
-        # to expect.
-        if channels_xml is not None:
-            # Detect which shape we got by looking at the root tag.
-            root_tag = channels_xml.tag.split("}")[-1]  # strip namespace
+        # Determine device type even if deviceInfo failed — default
+        # to IPC so we still try channel endpoints with the IPC
+        # routing (V4 DVRs may not have deviceInfo at all but
+        # typically DO have storage endpoints).
+        device_type = normalize_device_type(
+            device_info.get("deviceType", "")
+        )
+        _LOGGER.info(
+            "Detected %s at %s as deviceType=%r (routing channels "
+            "endpoint to %s, per-channel status to %s)",
+            device_info.get("model", "?"),
+            self._host,
+            device_info.get("deviceType", ""),
+            ("/Streaming/channels" if device_type == DEVICE_TYPE_IPCAMERA
+             else "/ContentMgmt/InputProxy/channels"),
+            ("/Streaming/channels/{id}/status" if device_type == DEVICE_TYPE_IPCAMERA
+             else "/ContentMgmt/InputProxy/channels/{id}/status"),
+        )
+
+        # Pick the right channel-list endpoint(s) for this device
+        # type. We try the "primary" first then fall back to the
+        # alternate in case of firmware that implements only one.
+        if device_type == DEVICE_TYPE_IPCAMERA:
+            primary_channels = ISAPI_STREAMING_CHANNELS
+            alt_channels = ISAPI_INPUT_PROXY_CHANNELS
+            primary_status_fmt = ISAPI_STREAMING_CHANNELS_STATUS
+            alt_status_fmt = ISAPI_INPUT_PROXY_CHANNELS_STATUS
+        else:
+            # NVR or DVR
+            primary_channels = ISAPI_INPUT_PROXY_CHANNELS
+            alt_channels = ISAPI_STREAMING_CHANNELS
+            primary_status_fmt = ISAPI_INPUT_PROXY_CHANNELS_STATUS
+            alt_status_fmt = ISAPI_STREAMING_CHANNELS_STATUS
+
+        # Second shared-client block for the per-device-type-dependent
+        # endpoints. We open a new client because the auth class
+        # may have switched from Digest to Basic during the first
+        # session and we want both halves of the refresh to share
+        # the same auth class.
+        async with self._make_client() as client:
+            channels_xml, channels_xml_alt, channels_endpoint_used = (
+                await self._fetch_channels(
+                    client, primary_channels, alt_channels,
+                )
+            )
+            storage_xml = await self._fetch_storage(client)
+            network_xml = await self._fetch_network_interfaces(client)
+            streaming_xml = await self._fetch_streaming(client)
+
+        # Channels parser-routing logic moved below; we now have
+        # the raw XML and need to pick the right parser based on
+        # which endpoint shape came back.
+
+        # Channels parser-routing: the two endpoint response shapes
+        # (InputProxyChannel vs StreamingChannel) differ in wrapper /
+        # child element names; we pick the matching parser based on
+        # the root tag.
+        if channels_xml is not None or channels_xml_alt is not None:
+            chosen = channels_xml if channels_xml is not None else channels_xml_alt
+            root_tag = chosen.tag.split("}")[-1]  # strip namespace
             if root_tag.endswith("StreamingChannelList"):
-                channels = _parse_streaming_channels_list(channels_xml)
+                channels = _parse_streaming_channels_list(chosen)
             else:
-                channels = _parse_channels(channels_xml)
+                channels = _parse_channels(chosen)
         else:
             channels = []
         storage = _parse_storage(storage_xml)

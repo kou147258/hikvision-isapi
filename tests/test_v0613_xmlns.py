@@ -243,11 +243,19 @@ async def test_get_xml_bare_xml_still_parses():
 # ---- manifest version ----
 
 
-def test_v0613_manifest_version_bumped():
+def test_v0613_manifest_version_at_or_beyond_0_6_13():
+    """v0.6.13 anchor; later releases may bump further. We assert
+    the manifest is at or beyond v0.6.13 so this test stays green
+    across subsequent bug-fix releases."""
     import json
     from pathlib import Path
     manifest = json.loads(Path(
         r"C:\Users\43457\Desktop\hikvision-isapi"
         r"\custom_components\hikvision_isapi_performance\manifest.json"
     ).read_text(encoding="utf-8"))
-    assert manifest["version"] == "0.6.13"
+    parts = manifest["version"].split(".")
+    assert parts[0] == "0"
+    assert int(parts[1]) >= 6
+    # If we're still on 0.6.x, third part must be >= 13.
+    if int(parts[1]) == 6:
+        assert int(parts[2]) >= 13
