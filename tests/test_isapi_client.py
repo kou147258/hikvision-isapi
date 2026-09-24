@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 
 from custom_components.hikvision_isapi.coordinator import (
+    _parse_channel_status,
     _parse_channels,
     _parse_device_info,
     _parse_network_interfaces,
@@ -361,3 +362,53 @@ def test_parse_streaming_channels_skips_entries_without_bitrate():
         '<StreamingChannel><id>1</id></StreamingChannel>'
     ))
     assert bitrates == {}
+
+
+# ---- v0.3.0 — per-channel status (binary sensor inputs) ----
+
+
+def test_parse_channel_status_online_recording_motion():
+    from xml.etree import ElementTree as ET
+
+    xml = """<InputProxyChannelStatus>
+        <online>true</online>
+        <recordStatus>recording</recordStatus>
+        <motionDetection>false</motionDetection>
+    </InputProxyChannelStatus>"""
+    status = _parse_channel_status(ET.fromstring(xml))
+    assert status["online"] is True
+    assert status["recording"] is True
+    assert status["motion_detected"] is False
+
+
+def test_parse_channel_status_idle_offline():
+    from xml.etree import ElementTree as ET
+
+    xml = """<InputProxyChannelStatus>
+        <online>false</online>
+        <recordStatus>idle</recordStatus>
+    </InputProxyChannelStatus>"""
+    status = _parse_channel_status(ET.fromstring(xml))
+    assert status["online"] is False
+    assert status["recording"] is False
+    assert status["motion_detected"] is False
+
+
+def test_parse_channel_status_handles_empty_root():
+    status = _parse_channel_status(None)
+    assert status == {
+        "online": False,
+        "recording": False,
+        "motion_detected": False,
+    }
+
+
+def test_parse_channel_status_handles_partial_xml():
+    from xml.etree import ElementTree as ET
+
+    status = _parse_channel_status(ET.fromstring(
+        '<InputProxyChannelStatus><online>true</online></InputProxyChannelStatus>'
+    ))
+    assert status["online"] is True
+    assert status["recording"] is False  # missing field defaults to False
+    assert status["motion_detected"] is False

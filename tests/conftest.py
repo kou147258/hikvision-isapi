@@ -33,6 +33,7 @@ _install_stub("homeassistant.const", {
     "Platform": types.SimpleNamespace(
         CAMERA="camera",
         SENSOR="sensor",
+        BINARY_SENSOR="binary_sensor",
         SWITCH="switch",
         BUTTON="button",
     ),
@@ -78,6 +79,16 @@ _install_stub("homeassistant.components.switch", {
 # Components — button
 _install_stub("homeassistant.components.button", {
     "ButtonEntity": type("ButtonEntity", (), {}),
+})
+
+# Components — binary sensor
+_install_stub("homeassistant.components.binary_sensor", {
+    "BinarySensorDeviceClass": types.SimpleNamespace(
+        CONNECTIVITY="connectivity",
+        RUNNING="running",
+        MOTION="motion",
+    ),
+    "BinarySensorEntity": type("BinarySensorEntity", (), {}),
 })
 
 # Exceptions

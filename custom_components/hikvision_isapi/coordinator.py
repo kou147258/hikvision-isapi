@@ -57,6 +57,7 @@ from .const import (
     ISAPI_CONTENT_MGMT_HDD,
     ISAPI_CONTENT_MGMT_STORAGE,
     ISAPI_INPUT_PROXY_CHANNELS,
+    ISAPI_INPUT_PROXY_CHANNELS_STATUS,
     ISAPI_STREAMING_CHANNELS,
     ISAPI_SYSTEM_DEVICE_INFO,
     ISAPI_SYSTEM_NETWORK_INTERFACES,
@@ -232,6 +233,40 @@ def _parse_streaming_channels(
     return out
 
 
+def _parse_channel_status(
+    root: ET.Element | None,
+) -> dict[str, bool]:
+    """Parse ``/ISAPI/ContentMgmt/InputProxy/channels/<id>/status``.
+
+    Hikvision's response shape is::
+
+        <InputProxyChannelStatus>
+          <online>true|false</online>
+          <recordStatus>recording|idle</recordStatus>
+          <signalLost>true|false</signalLost>     (optional — signal state)
+          <motionDetection>true|false</motionDetection>  (optional)
+        </InputProxyChannelStatus>
+
+    We return a dict with three booleans; missing fields default to
+    False (we don't know the channel is offline just because the
+    firmware didn't report the field).
+    """
+    if root is None:
+        return {
+            "online": False,
+            "recording": False,
+            "motion_detected": False,
+        }
+    return {
+        "online": (_xml_text(root, "online") or "").lower() == "true",
+        "recording": (_xml_text(root, "recordStatus") or "").lower()
+        == "recording",
+        "motion_detected": (
+            _xml_text(root, "motionDetection") or ""
+        ).lower() == "true",
+    }
+
+
 def _safe_int_mb(value: Any) -> int | None:
     """Best-effort int parsing that handles leading/trailing whitespace."""
     if value is None:
@@ -384,6 +419,37 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         storage = _parse_storage(storage_xml)
         network_interfaces = _parse_network_interfaces(network_xml)
         streaming_bitrate_kbps = _parse_streaming_channels(streaming_xml)
+
+        # v0.3.0 — enrich each channel with detailed per-channel status
+        # (online / recording / motion_detected). Best-effort per
+        # channel: a small IPC that doesn't implement the per-channel
+        # status endpoint keeps the channel-level online / recording
+        # values from the channels list response (which are usually
+        # present).
+        for ch in channels:
+            ch_id = ch.get("id", "")
+            if not ch_id:
+                continue
+            try:
+                async with self._make_client() as client:
+                    status_xml = await client.get_xml(
+                        ISAPI_INPUT_PROXY_CHANNELS_STATUS.format(id=ch_id)
+                    )
+                ch_status = _parse_channel_status(status_xml)
+                # Only override fields that the per-channel endpoint
+                # actually reported (non-default). This way, the
+                # channel-list's online/recording values stay when the
+                # per-channel endpoint is unavailable.
+                ch["online"] = ch_status["online"] or ch.get("online", False)
+                ch["recording"] = (
+                    ch_status["recording"] or ch.get("recording", False)
+                )
+                ch["motion_detected"] = ch_status["motion_detected"]
+            except ISAPIError as exc:
+                _LOGGER.debug(
+                    "Per-channel status unavailable for %s ch %s: %s",
+                    self._host, ch_id, exc,
+                )
 
         capabilities: dict[str, bool] = {
             "ptz": device_info.get("deviceType", "").lower()

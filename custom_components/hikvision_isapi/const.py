@@ -42,6 +42,9 @@ ISAPI_SYSTEM_REBOOT: Final = "/ISAPI/System/reboot"
 ISAPI_INPUT_PROXY_CHANNELS: Final = (
     "/ISAPI/ContentMgmt/InputProxy/channels"
 )
+ISAPI_INPUT_PROXY_CHANNELS_STATUS: Final = (
+    "/ISAPI/ContentMgmt/InputProxy/channels/{id}/status"
+)
 ISAPI_STREAMING_CHANNELS: Final = "/ISAPI/Streaming/channels"
 
 # Storage (NVR / DVR)

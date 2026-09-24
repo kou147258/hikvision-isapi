@@ -62,6 +62,11 @@
     },
     "button": {
       "reboot": {"name": "Reboot Device"}
+    },
+    "binary_sensor": {
+      "channel_online": {"name": "Online"},
+      "channel_recording": {"name": "Recording"},
+      "channel_motion": {"name": "Motion Detected"}
     }
   }
 }
