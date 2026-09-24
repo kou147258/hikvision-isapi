@@ -262,14 +262,28 @@ class ISAPIClient:
             async with self._session.request(
                 method, url, data=body, headers=headers
             ) as resp:
-                return await self._read_response_text(resp, path, method)
+                # v0.6.3 fix: pass body + content_type through so the
+                # digest-auth retry inside _read_response_text can replay
+                # them. Pre-v0.6.3 the retry path referenced ``content_type``
+                # as if it were local-scope (it was actually a parameter of
+                # _request), causing NameError on the first 401 challenge
+                # from a real Hikvision device.
+                return await self._read_response_text(
+                    resp, path, method, body=body, content_type=content_type,
+                )
         except ISAPIAuthError:
             raise
         except (ClientError, asyncio.TimeoutError) as exc:
             raise ISAPIConnectionError(str(exc)) from exc
 
     async def _read_response_text(
-        self, resp: ClientResponse, path: str, method: str
+        self,
+        resp: ClientResponse,
+        path: str,
+        method: str,
+        *,
+        body: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         if resp.status in (401, 403):
             # Try Digest auth handshake.
@@ -284,25 +298,30 @@ class ISAPIClient:
             auth_header = _build_digest_header(
                 self._username, self._password, method, path, challenge
             )
-            # Retry once with the auth header.
+            # Retry once with the auth header. Replay the original
+            # request body + Content-Type if it was set — for PUTs that
+            # carry an XML payload, dropping the body on retry would
+            # silently no-op the write.
             url = str(resp.url)
+            retry_headers: dict[str, str] = {"Authorization": auth_header}
+            if content_type:
+                retry_headers["Content-Type"] = content_type
             try:
                 async with self._session.request(
-                    method, url, data=await resp.read(),
-                    headers={"Authorization": auth_header, **(
-                        {"Content-Type": content_type}
-                        if content_type else {}
-                    )},
+                    method, url, data=body, headers=retry_headers,
                 ) as retry_resp:
-                    return await self._read_response_text(retry_resp, path, method)
+                    return await self._read_response_text(
+                        retry_resp, path, method,
+                        body=body, content_type=content_type,
+                    )
             except ISAPIAuthError:
                 raise
             except (ClientError, asyncio.TimeoutError) as exc:
                 raise ISAPIConnectionError(str(exc)) from exc
         if resp.status >= 400:
-            body = await resp.text()
+            body_text = await resp.text()
             raise ISAPIError(
-                f"HTTP {resp.status} on {resp.url}: {body[:200]}",
+                f"HTTP {resp.status} on {resp.url}: {body_text[:200]}",
                 status_code=resp.status,
             )
         return await resp.text()
