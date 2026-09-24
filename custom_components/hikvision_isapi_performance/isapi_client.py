@@ -47,6 +47,7 @@ subsequent calls once we've confirmed which scheme the device uses).
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from xml.etree import ElementTree as ET
 
@@ -83,6 +84,39 @@ class ISAPIError(Exception):
     def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+# v0.6.13: Hikvision V5.x firmware returns XML with a default
+# namespace declaration like
+#   ``<DeviceInfo xmlns="http://www.hikvision.com/ver20/XMLSchema">``
+# on every response. Python's ElementTree then prefixes every tag
+# with that namespace (``{http://...}model``), which means a plain
+# ``root.find("model")`` returns None. The coordinator's XML
+# parsers (``_parse_device_info``, ``_parse_system_status``, …)
+# all use plain-tag lookups, so without this fix they all return
+# empty defaults and every sensor shows "unknown" in HA even
+# though the device is responding.
+#
+# We strip ``xmlns`` declarations before parsing so plain tag
+# matching works on Hikvision's namespaced responses. We preserve
+# other attributes (``version="2.0"`` etc.) by only removing the
+# attribute declaration itself, not the rest of the tag.
+_XMLNS_RE = re.compile(
+    # Matches ``xmlns="..."`` and ``xmlns:foo="..."``. Whitespace-
+    # tolerant because Hikvision uses inconsistent spacing between
+    # the attribute name and the value.
+    r"""\s+xmlns(:[a-zA-Z][a-zA-Z0-9_-]*)?\s*=\s*"[^"]*"|\s+xmlns(:[a-zA-Z][a-zA-Z0-9_-]*)?\s*=\s*'[^']*'"""
+)
+
+
+def _strip_xmlns(text: str) -> str:
+    """Remove XML namespace declarations from a response body.
+
+    Hikvision responses occasionally also use repeated xmlns on
+    child elements (``:xsi:`` style prefixes). We strip them all so
+    ElementTree can match plain tag names.
+    """
+    return _XMLNS_RE.sub("", text)
 
 
 def _extract_challenge_lower(headers: httpx.Headers) -> str:
@@ -309,6 +343,10 @@ class ISAPIClient:
     async def get_xml(self, path: str) -> ET.Element:
         """GET ``path`` and parse the response as XML."""
         text = await self.get_text(path)
+        # v0.6.13: Hikvision's responses use a default namespace;
+        # strip it before parsing so ``root.find("model")`` etc.
+        # match plain tag names instead of the namespaced form.
+        text = _strip_xmlns(text)
         try:
             return ET.fromstring(text)
         except ET.ParseError as exc:
@@ -326,6 +364,9 @@ class ISAPIClient:
     async def put_xml(self, path: str, body: str) -> ET.Element:
         """PUT ``body`` (XML) to ``path`` and parse the response."""
         text = await self.put_text(path, body)
+        # v0.6.13: same namespace-strip as ``get_xml`` (Hikvision
+        # PUT responses are namespaced too).
+        text = _strip_xmlns(text)
         try:
             return ET.fromstring(text)
         except ET.ParseError as exc:

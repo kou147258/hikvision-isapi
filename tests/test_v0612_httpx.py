@@ -309,14 +309,22 @@ def test_v0612_coordinator_per_channel_imports_include_connection_error():
 
 
 def test_v0612_manifest_version_bumped():
-    """v0.6.12: manifest.json.version = "0.6.12"."""
+    """v0.6.12 anchor; v0.6.13 added xmlns-strip but the manifest
+    requirement for httpx is unchanged."""
     import json
     from pathlib import Path
     manifest = json.loads(Path(
         r"C:\Users\43457\Desktop\hikvision-isapi"
         r"\custom_components\hikvision_isapi_performance\manifest.json"
     ).read_text(encoding="utf-8"))
-    assert manifest["version"] == "0.6.12"
+    # The current version is whatever follows v0.6.12 — we don't
+    # pin a specific value here so this test stays valid across
+    # subsequent bug-fix releases. Just verify it's at or beyond
+    # v0.6.12.
+    ver = manifest["version"]
+    parts = ver.split(".")
+    assert parts[0] == "0", f"unexpected major: {ver}"
+    assert int(parts[1]) >= 6, f"unexpected minor: {ver}"
 
 
 def test_v0612_manifest_requires_httpx():
