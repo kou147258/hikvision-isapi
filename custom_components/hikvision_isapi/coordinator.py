@@ -54,7 +54,10 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
     DOMAIN,
+    ISAPI_CONTENT_MGMT_HDD,
+    ISAPI_CONTENT_MGMT_STORAGE,
     ISAPI_INPUT_PROXY_CHANNELS,
+    ISAPI_STREAMING_CHANNELS,
     ISAPI_SYSTEM_DEVICE_INFO,
     ISAPI_SYSTEM_NETWORK_INTERFACES,
     ISAPI_SYSTEM_STATUS,
@@ -137,6 +140,108 @@ def _parse_channels(root: ET.Element | None) -> list[dict[str, Any]]:
     return out
 
 
+def _parse_storage(root: ET.Element | None) -> dict[str, Any]:
+    """Parse ``/ISAPI/ContentMgmt/storage`` response (NVR / DVR only).
+
+    Hikvision's response shape is::
+
+        <Storage>
+          <totalCapacity>2000000</totalCapacity>          (MB)
+          <usedCapacity>1234567</usedCapacity>           (MB)
+          <freeCapacity>765433</freeCapacity>            (MB)
+          <status>normal</status>                        (normal | exception)
+        </Storage>
+    """
+    if root is None:
+        return {
+            "total_mb": None,
+            "used_mb": None,
+            "free_mb": None,
+            "status": "unknown",
+        }
+    return {
+        "total_mb": _safe_int_mb(_xml_text(root, "totalCapacity")),
+        "used_mb": _safe_int_mb(_xml_text(root, "usedCapacity")),
+        "free_mb": _safe_int_mb(_xml_text(root, "freeCapacity")),
+        "status": _xml_text(root, "status") or "unknown",
+    }
+
+
+def _parse_network_interfaces(
+    root: ET.Element | None,
+) -> list[dict[str, Any]]:
+    """Parse ``/ISAPI/System/Network/interfaces`` response.
+
+    Hikvision's response shape is::
+
+        <NetworkInterfaceList>
+          <NetworkInterface>
+            <id>1</id>
+            <interfaceName>LAN1</interfaceName>
+            <IPAddress>192.168.1.10</IPAddress>
+            <subnetMask>255.255.255.0</subnetMask>
+            <DefaultGateway>192.168.1.1</DefaultGateway>
+            <MTU>1500</MTU>
+            <MACAddress>00:11:22:33:44:55</MACAddress>
+            ...
+          </NetworkInterface>
+        </NetworkInterfaceList>
+    """
+    if root is None:
+        return []
+    out: list[dict[str, Any]] = []
+    for iface in root.findall(".//NetworkInterface"):
+        out.append(
+            {
+                "id": _xml_text(iface, "id") or "",
+                "name": _xml_text(iface, "interfaceName") or "",
+                "ip_address": _xml_text(iface, "IPAddress") or "",
+                "subnet_mask": _xml_text(iface, "subnetMask") or "",
+                "default_gateway": _xml_text(iface, "DefaultGateway")
+                or "",
+                "mtu": _safe_int_mb(_xml_text(iface, "MTU")),
+                "mac_address": _xml_text(iface, "MACAddress") or "",
+            }
+        )
+    return out
+
+
+def _parse_streaming_channels(
+    root: ET.Element | None,
+) -> dict[str, int]:
+    """Parse ``/ISAPI/Streaming/channels`` for per-channel bitrate.
+
+    Returns ``{channel_id: bitrate_kbps}``. Bitrate may be reported as
+    ``videoAverageBitrate`` (kbps) or absent (older firmware); we
+    silently skip channels without a bitrate field.
+    """
+    if root is None:
+        return {}
+    out: dict[str, int] = {}
+    for ch in root.findall(".//StreamingChannel"):
+        ch_id = _xml_text(ch, "id") or ""
+        if not ch_id:
+            continue
+        bitrate = _safe_int_mb(
+            _xml_text(ch, "videoAverageBitrate")
+        )
+        if bitrate is None:
+            bitrate = _safe_int_mb(_xml_text(ch, "maxBitrate"))
+        if bitrate is not None:
+            out[ch_id] = bitrate
+    return out
+
+
+def _safe_int_mb(value: Any) -> int | None:
+    """Best-effort int parsing that handles leading/trailing whitespace."""
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 class HikvisionISAPIData:
     """Container for one coordinator refresh result."""
 
@@ -146,11 +251,17 @@ class HikvisionISAPIData:
         system_status: dict[str, str],
         channels: list[dict[str, Any]],
         capabilities: dict[str, bool],
+        storage: dict[str, Any] | None = None,
+        network_interfaces: list[dict[str, Any]] | None = None,
+        streaming_bitrate_kbps: dict[str, int] | None = None,
     ) -> None:
         self.device_info = device_info
         self.system_status = system_status
         self.channels = channels
         self.capabilities = capabilities
+        self.storage = storage or {}
+        self.network_interfaces = network_interfaces or []
+        self.streaming_bitrate_kbps = streaming_bitrate_kbps or {}
 
 
 class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
@@ -192,6 +303,9 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         self.system_status: dict[str, str] = {}
         self.channels: list[dict[str, Any]] = []
         self.capabilities: dict[str, bool] = {}
+        self.storage: dict[str, Any] = {}
+        self.network_interfaces: list[dict[str, Any]] = []
+        self.streaming_bitrate_kbps: dict[str, int] = {}
 
     @property
     def host(self) -> str:
@@ -208,14 +322,49 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         )
 
     async def _async_update_data(self) -> HikvisionISAPIData:
-        """One coordinator refresh: GET deviceInfo / status / channels."""
+        """One coordinator refresh: GET deviceInfo / status / channels / storage / network."""
         try:
             async with self._make_client() as client:
+                # Always fetched.
                 device_info_xml = await client.get_xml(ISAPI_SYSTEM_DEVICE_INFO)
                 status_xml = await client.get_xml(ISAPI_SYSTEM_STATUS)
                 channels_xml = await client.get_xml(
                     ISAPI_INPUT_PROXY_CHANNELS
                 )
+                # Best-effort — some devices (mostly small IPCs) don't
+                # implement these endpoints. We catch the ISAPIError so
+                # a missing endpoint doesn't take down the entire
+                # coordinator refresh.
+                storage_xml: ET.Element | None = None
+                try:
+                    storage_xml = await client.get_xml(
+                        ISAPI_CONTENT_MGMT_STORAGE
+                    )
+                except ISAPIError as exc:
+                    _LOGGER.debug(
+                        "Storage endpoint unavailable on %s: %s",
+                        self._host, exc,
+                    )
+                network_xml: ET.Element | None = None
+                try:
+                    network_xml = await client.get_xml(
+                        ISAPI_SYSTEM_NETWORK_INTERFACES
+                    )
+                except ISAPIError as exc:
+                    _LOGGER.debug(
+                        "Network endpoint unavailable on %s: %s",
+                        self._host, exc,
+                    )
+                streaming_xml: ET.Element | None = None
+                try:
+                    streaming_xml = await client.get_xml(
+                        f"{ISAPI_STREAMING_CHANNELS}/1"
+                    )
+                except ISAPIError as exc:
+                    _LOGGER.debug(
+                        "Streaming endpoint unavailable on %s: %s",
+                        self._host, exc,
+                    )
         except ISAPIConnectionError as exc:
             raise UpdateFailed(
                 f"Network error talking to {self._host}: {exc}"
@@ -232,6 +381,9 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         device_info = _parse_device_info(device_info_xml)
         system_status = _parse_system_status(status_xml)
         channels = _parse_channels(channels_xml)
+        storage = _parse_storage(storage_xml)
+        network_interfaces = _parse_network_interfaces(network_xml)
+        streaming_bitrate_kbps = _parse_streaming_channels(streaming_xml)
 
         capabilities: dict[str, bool] = {
             "ptz": device_info.get("deviceType", "").lower()
@@ -243,10 +395,16 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         self.system_status = system_status
         self.channels = channels
         self.capabilities = capabilities
+        self.storage = storage
+        self.network_interfaces = network_interfaces
+        self.streaming_bitrate_kbps = streaming_bitrate_kbps
 
         return HikvisionISAPIData(
             device_info=device_info,
             system_status=system_status,
             channels=channels,
             capabilities=capabilities,
+            storage=storage,
+            network_interfaces=network_interfaces,
+            streaming_bitrate_kbps=streaming_bitrate_kbps,
         )

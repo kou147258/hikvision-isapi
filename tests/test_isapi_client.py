@@ -13,6 +13,9 @@ import hashlib
 from custom_components.hikvision_isapi.coordinator import (
     _parse_channels,
     _parse_device_info,
+    _parse_network_interfaces,
+    _parse_storage,
+    _parse_streaming_channels,
     _parse_system_status,
 )
 from custom_components.hikvision_isapi.isapi_client import (
@@ -247,3 +250,114 @@ def test_parse_channels_handles_empty_root():
 
     assert _parse_channels(ET.fromstring("<InputProxyChannelList/>")) == []
     assert _parse_channels(None) == []
+
+
+# ---- v0.2.0 — storage / network / streaming XML extractors ----
+
+
+def test_parse_storage_extracts_capacity_and_status():
+    from xml.etree import ElementTree as ET
+
+    xml = """<Storage>
+        <totalCapacity>2000000</totalCapacity>
+        <usedCapacity>1234567</usedCapacity>
+        <freeCapacity>765433</freeCapacity>
+        <status>normal</status>
+    </Storage>"""
+    storage = _parse_storage(ET.fromstring(xml))
+    assert storage["total_mb"] == 2000000
+    assert storage["used_mb"] == 1234567
+    assert storage["free_mb"] == 765433
+    assert storage["status"] == "normal"
+
+
+def test_parse_storage_handles_empty_root():
+    storage = _parse_storage(None)
+    assert storage == {
+        "total_mb": None, "used_mb": None,
+        "free_mb": None, "status": "unknown",
+    }
+
+
+def test_parse_storage_handles_unparseable_capacity():
+    from xml.etree import ElementTree as ET
+
+    storage = _parse_storage(ET.fromstring(
+        '<Storage><totalCapacity>not-a-number</totalCapacity></Storage>'
+    ))
+    assert storage["total_mb"] is None
+    assert storage["status"] == "unknown"
+
+
+def test_parse_network_interfaces_extracts_ip_mask_gateway():
+    from xml.etree import ElementTree as ET
+
+    xml = """<NetworkInterfaceList>
+        <NetworkInterface>
+            <id>1</id>
+            <interfaceName>LAN1</interfaceName>
+            <IPAddress>192.168.1.10</IPAddress>
+            <subnetMask>255.255.255.0</subnetMask>
+            <DefaultGateway>192.168.1.1</DefaultGateway>
+            <MTU>1500</MTU>
+            <MACAddress>00:11:22:33:44:55</MACAddress>
+        </NetworkInterface>
+        <NetworkInterface>
+            <id>2</id>
+            <interfaceName>WIFI</interfaceName>
+            <IPAddress>10.0.0.5</IPAddress>
+            <subnetMask>255.255.255.0</subnetMask>
+            <DefaultGateway>10.0.0.1</DefaultGateway>
+            <MTU>1500</MTU>
+            <MACAddress>AA:BB:CC:DD:EE:FF</MACAddress>
+        </NetworkInterface>
+    </NetworkInterfaceList>"""
+    ifs = _parse_network_interfaces(ET.fromstring(xml))
+    assert len(ifs) == 2
+    assert ifs[0]["ip_address"] == "192.168.1.10"
+    assert ifs[0]["subnet_mask"] == "255.255.255.0"
+    assert ifs[0]["default_gateway"] == "192.168.1.1"
+    assert ifs[1]["ip_address"] == "10.0.0.5"
+    assert ifs[1]["name"] == "WIFI"
+
+
+def test_parse_network_interfaces_handles_empty_root():
+    from xml.etree import ElementTree as ET
+
+    assert _parse_network_interfaces(ET.fromstring("<NetworkInterfaceList/>")) == []
+    assert _parse_network_interfaces(None) == []
+
+
+def test_parse_streaming_channels_extracts_bitrate():
+    from xml.etree import ElementTree as ET
+
+    xml = """<StreamingChannelList>
+        <StreamingChannel>
+            <id>1</id>
+            <videoChannelId>1</videoChannelId>
+            <videoAverageBitrate>2048</videoAverageBitrate>
+        </StreamingChannel>
+        <StreamingChannel>
+            <id>2</id>
+            <videoChannelId>2</videoChannelId>
+            <maxBitrate>4096</maxBitrate>
+        </StreamingChannel>
+    </StreamingChannelList>"""
+    bitrates = _parse_streaming_channels(ET.fromstring(xml))
+    assert bitrates == {"1": 2048, "2": 4096}
+
+
+def test_parse_streaming_channels_handles_empty_root():
+    from xml.etree import ElementTree as ET
+
+    assert _parse_streaming_channels(ET.fromstring("<StreamingChannelList/>")) == {}
+    assert _parse_streaming_channels(None) == {}
+
+
+def test_parse_streaming_channels_skips_entries_without_bitrate():
+    from xml.etree import ElementTree as ET
+
+    bitrates = _parse_streaming_channels(ET.fromstring(
+        '<StreamingChannel><id>1</id></StreamingChannel>'
+    ))
+    assert bitrates == {}

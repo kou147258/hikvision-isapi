@@ -46,7 +46,16 @@
       "cpu_usage": {"name": "CPU Usage"},
       "memory_usage": {"name": "Memory Usage"},
       "uptime": {"name": "Uptime"},
-      "channel_count": {"name": "Channel Count"}
+      "channel_count": {"name": "Channel Count"},
+      "storage_total": {"name": "Storage Total"},
+      "storage_used": {"name": "Storage Used"},
+      "storage_free": {"name": "Storage Free"},
+      "storage_usage": {"name": "Storage Usage"},
+      "network_ip": {"name": "IP Address"},
+      "network_subnet": {"name": "Subnet Mask"},
+      "network_gateway": {"name": "Default Gateway"},
+      "network_mac": {"name": "MAC Address"},
+      "channel_1_bitrate": {"name": "Channel 1 Bitrate"}
     },
     "switch": {
       "recording": {"name": "Recording"}

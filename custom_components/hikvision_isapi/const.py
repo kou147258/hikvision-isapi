@@ -44,6 +44,10 @@ ISAPI_INPUT_PROXY_CHANNELS: Final = (
 )
 ISAPI_STREAMING_CHANNELS: Final = "/ISAPI/Streaming/channels"
 
+# Storage (NVR / DVR)
+ISAPI_CONTENT_MGMT_STORAGE: Final = "/ISAPI/ContentMgmt/storage"
+ISAPI_CONTENT_MGMT_HDD: Final = "/ISAPI/ContentMgmt/hdd"
+
 # Event streaming
 ISAPI_EVENT_ALERT_STREAM: Final = (
     "/ISAPI/Event/notification/alertStream"

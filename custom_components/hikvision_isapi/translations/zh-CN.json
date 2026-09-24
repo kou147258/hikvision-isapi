@@ -46,7 +46,16 @@
       "cpu_usage": {"name": "CPU 使用率"},
       "memory_usage": {"name": "内存使用率"},
       "uptime": {"name": "运行时长"},
-      "channel_count": {"name": "通道数"}
+      "channel_count": {"name": "通道数"},
+      "storage_total": {"name": "存储总量"},
+      "storage_used": {"name": "存储使用量"},
+      "storage_free": {"name": "存储剩余"},
+      "storage_usage": {"name": "存储使用率"},
+      "network_ip": {"name": "IP 地址"},
+      "network_subnet": {"name": "子网掩码"},
+      "network_gateway": {"name": "默认网关"},
+      "network_mac": {"name": "MAC 地址"},
+      "channel_1_bitrate": {"name": "通道 1 平均码率"}
     },
     "switch": {
       "recording": {"name": "录像"}
