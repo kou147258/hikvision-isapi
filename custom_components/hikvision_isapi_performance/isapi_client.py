@@ -114,6 +114,21 @@ def _compute_digest_response(
     return response
 
 
+def _build_basic_header(username: str, password: str) -> str:
+    """Build an ``Authorization: Basic ...`` header value.
+
+    Used as a fallback for older Hikvision firmware that returns 401 /
+    403 without a Digest challenge (or with an empty WWW-Authenticate
+    header). Some V4.x NVRs and early IPCs accept Basic auth when
+    their Digest path is misconfigured server-side.
+    """
+    import base64
+    token = base64.b64encode(
+        f"{username}:{password}".encode("utf-8")
+    ).decode("ascii")
+    return f"Basic {token}"
+
+
 def _build_digest_header(
     username: str,
     password: str,
@@ -286,24 +301,82 @@ class ISAPIClient:
         content_type: str | None = None,
     ) -> str:
         if resp.status in (401, 403):
-            # Try Digest auth handshake.
-            www_auth = resp.headers.get("WWW-Authenticate", "")
-            challenge = _parse_digest_challenge(www_auth)
+            # Auth handshake. The device's response shape decides which
+            # path we take:
+            #
+            # 1. ``WWW-Authenticate: Digest realm="..." nonce="..." qop="auth"``
+            #    — most modern Hikvision devices. Compute Digest per
+            #    RFC 2617 and retry.
+            # 2. ``WWW-Authenticate: Basic realm="..."`` — older firmware
+            #    on some V4.x NVRs and early IPCs. Send Basic auth.
+            # 3. Empty / missing / unrecognized header — some devices
+            #    reply with HTTP 403 + empty WWW-Authenticate (server-
+            #    side config quirk, not uncommon on
+            #    ``/ISAPI/ContentMgmt/InputProxy/channels`` and friends).
+            #    Try Basic auth as a last-ditch fallback; many cameras
+            #    accept it when their Digest path is misconfigured.
+            www_auth = resp.headers.get("WWW-Authenticate", "").strip()
+            challenge = _parse_digest_challenge(www_auth) if www_auth else None
             if challenge is None:
-                raise ISAPIAuthError(
-                    f"HTTP {resp.status} on {resp.url}: "
-                    f"unrecognized WWW-Authenticate: {www_auth[:120]}",
-                    status_code=resp.status,
-                )
+                # Try Basic auth fallback. We only do this on 401/403 so
+                # we don't send Basic creds on the first request.
+                basic_header = _build_basic_header(self._username, self._password)
+                url = str(resp.url)
+                retry_headers: dict[str, str] = {"Authorization": basic_header}
+                if content_type:
+                    retry_headers["Content-Type"] = content_type
+                try:
+                    async with self._session.request(
+                        method, url, data=body, headers=retry_headers,
+                    ) as retry_resp:
+                        if retry_resp.status in (200, 201, 204):
+                            # Basic auth worked — return the body.
+                            return await retry_resp.text()
+                        # Still failing. Try a Digest handshake in case
+                        # the device advertises Digest on the second hit.
+                        retry_www_auth = retry_resp.headers.get(
+                            "WWW-Authenticate", ""
+                        ).strip()
+                        retry_challenge = (
+                            _parse_digest_challenge(retry_www_auth)
+                            if retry_www_auth else None
+                        )
+                        if retry_challenge is not None:
+                            digest_header = _build_digest_header(
+                                self._username, self._password,
+                                method, path, retry_challenge,
+                            )
+                            digest_headers: dict[str, str] = {
+                                "Authorization": digest_header,
+                            }
+                            if content_type:
+                                digest_headers["Content-Type"] = content_type
+                            async with self._session.request(
+                                method, url, data=body, headers=digest_headers,
+                            ) as digest_resp:
+                                return await self._read_response_text(
+                                    digest_resp, path, method,
+                                    body=body, content_type=content_type,
+                                )
+                        # Both Basic and Digest failed. Surface the
+                        # original 401/403 with whatever header the
+                        # device sent (often empty).
+                        raise ISAPIAuthError(
+                            f"HTTP {resp.status} on {resp.url}: "
+                            f"unrecognized WWW-Authenticate: {www_auth[:120]}",
+                            status_code=resp.status,
+                        )
+                except ISAPIAuthError:
+                    raise
+                except (ClientError, asyncio.TimeoutError) as exc:
+                    raise ISAPIConnectionError(str(exc)) from exc
+
+            # Digest path — most common.
             auth_header = _build_digest_header(
                 self._username, self._password, method, path, challenge
             )
-            # Retry once with the auth header. Replay the original
-            # request body + Content-Type if it was set — for PUTs that
-            # carry an XML payload, dropping the body on retry would
-            # silently no-op the write.
             url = str(resp.url)
-            retry_headers: dict[str, str] = {"Authorization": auth_header}
+            retry_headers = {"Authorization": auth_header}
             if content_type:
                 retry_headers["Content-Type"] = content_type
             try:

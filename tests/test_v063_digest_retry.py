@@ -100,10 +100,23 @@ def test_get_text_digest_retry_does_not_raise_name_error():
 
 
 def test_get_text_unrecognized_www_authenticate_raises_auth_error():
-    """401 with non-Digest WWW-Authenticate should raise ISAPIAuthError, not NameError."""
+    """v0.6.7: 401 + non-Digest WWW-Authenticate falls back to Basic auth.
+
+    Pre-v0.6.7 this test asserted that Basic challenges raised
+    ISAPIAuthError immediately. After the Basic-auth-fallback fix,
+    a 401 with ``Basic realm=...`` triggers a Basic retry instead
+    of failing. If the retry also fails (server rejects Basic), we
+    only then raise ISAPIAuthError. So this test now asserts that
+    two requests are made (original + Basic retry) and the Basic
+    one carries the right header.
+    """
     captured: list[dict[str, Any]] = []
     session = _build_session(
-        responses=[_FakeRespCM(401, {"WWW-Authenticate": "Basic realm=foo"})],
+        responses=[
+            _FakeRespCM(401, {"WWW-Authenticate": "Basic realm=foo"}),
+            # Basic attempt also 401 → ISAPIAuthError raised
+            _FakeRespCM(401, {"WWW-Authenticate": ""}),
+        ],
         captured=captured,
     )
 
@@ -113,11 +126,12 @@ def test_get_text_unrecognized_www_authenticate_raises_auth_error():
     try:
         asyncio.run(client.get_text("/ISAPI/System/deviceInfo"))
     except ISAPIAuthError:
-        pass  # expected
+        pass  # expected (Basic retry also fails)
     else:
         raise AssertionError("Expected ISAPIAuthError")
-    # Only one request was made (no retry when challenge is unparseable)
-    assert len(captured) == 1
+    # Two requests were made: original + Basic retry
+    assert len(captured) == 2
+    assert captured[1]["headers"]["Authorization"].startswith("Basic ")
 
 
 def test_put_text_digest_retry_preserves_body_and_content_type():

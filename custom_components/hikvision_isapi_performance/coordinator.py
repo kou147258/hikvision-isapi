@@ -504,9 +504,29 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                 # Always fetched.
                 device_info_xml = await client.get_xml(ISAPI_SYSTEM_DEVICE_INFO)
                 status_xml = await client.get_xml(ISAPI_SYSTEM_STATUS)
-                channels_xml = await client.get_xml(
-                    ISAPI_INPUT_PROXY_CHANNELS
-                )
+                # Channels list — best-effort. Some IPC firmware versions
+                # (verified on 10.18.176.10 / 10.18.176.65 in the user
+                # fleet) return HTTP 403 with empty WWW-Authenticate on
+                # this endpoint even though the same credentials work
+                # for /ISAPI/System/deviceInfo and /ISAPI/System/status.
+                # The v0.6.7 isapi_client falls back to Basic auth when
+                # Digest challenge parsing fails, but if that also fails
+                # we don't want to abort the whole coordinator refresh
+                # — we still want deviceInfo + system_status to reach
+                # HA's sensor platform. Wrap in try/except so a 403 here
+                # becomes empty channels list, not a full refresh
+                # failure that marks every entity unavailable.
+                channels_xml: ET.Element | None = None
+                try:
+                    channels_xml = await client.get_xml(
+                        ISAPI_INPUT_PROXY_CHANNELS
+                    )
+                except (ISAPIError, ISAPIAuthError) as exc:
+                    _LOGGER.debug(
+                        "InputProxy/channels unavailable on %s: %s — "
+                        "continuing with empty channels list",
+                        self._host, exc,
+                    )
                 # Best-effort — some devices (mostly small IPCs) don't
                 # implement these endpoints. We catch the ISAPIError so
                 # a missing endpoint doesn't take down the entire
