@@ -1,0 +1,128 @@
+"""Pytest config — stub homeassistant modules so unit tests can import the
+integration without a full HA install.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+
+
+def _install_stub(name: str, attrs: dict[str, object] | None = None) -> None:
+    if name in sys.modules:
+        return
+    module = types.ModuleType(name)
+    for k, v in (attrs or {}).items():
+        setattr(module, k, v)
+    sys.modules[name] = module
+
+
+# Top-level homeassistant namespace
+_install_stub("homeassistant")
+# Parent sub-namespace so ``from homeassistant.helpers import X`` works
+_install_stub("homeassistant.helpers")
+
+# Core HA constants
+_install_stub("homeassistant.const", {
+    "CONF_HOST": "host",
+    "CONF_PASSWORD": "password",
+    "CONF_PORT": "port",
+    "CONF_SCAN_INTERVAL": "scan_interval",
+    "CONF_USERNAME": "username",
+    "PERCENTAGE": "%",
+    "Platform": types.SimpleNamespace(
+        CAMERA="camera",
+        SENSOR="sensor",
+        SWITCH="switch",
+        BUTTON="button",
+    ),
+    "UnitOfTime": types.SimpleNamespace(SECONDS="s"),
+    "ATTR_DEVICE_ID": "device_id",
+})
+
+# Core
+_install_stub("homeassistant.core", {
+    "HomeAssistant": object,
+    "ServiceCall": object,
+    "callback": lambda f: f,
+})
+
+# Config entries
+_install_stub("homeassistant.config_entries", {
+    "ConfigEntry": object,
+    "ConfigFlow": type("ConfigFlow", (), {}),
+    "ConfigFlowResult": dict,
+    "OptionsFlow": type("OptionsFlow", (), {}),
+})
+
+# Components — camera
+_install_stub("homeassistant.components.camera", {
+    "Camera": type("Camera", (), {}),
+})
+
+# Components — sensor
+_install_stub("homeassistant.components.sensor", {
+    "SensorDeviceClass": types.SimpleNamespace(DURATION="duration"),
+    "SensorEntity": type("SensorEntity", (), {}),
+    "SensorEntityDescription": type("SensorEntityDescription", (), {}),
+    "SensorStateClass": types.SimpleNamespace(
+        MEASUREMENT="measurement", TOTAL_INCREASING="total_increasing"
+    ),
+})
+
+# Components — switch
+_install_stub("homeassistant.components.switch", {
+    "SwitchEntity": type("SwitchEntity", (), {}),
+})
+
+# Components — button
+_install_stub("homeassistant.components.button", {
+    "ButtonEntity": type("ButtonEntity", (), {}),
+})
+
+# Exceptions
+_install_stub("homeassistant.exceptions", {
+    "ConfigEntryNotReady": Exception,
+})
+
+# Helpers — update coordinator
+_install_stub("homeassistant.helpers.update_coordinator", {
+    "DataUpdateCoordinator": type(
+        "DataUpdateCoordinator",
+        (),
+        {"__class_getitem__": classmethod(lambda cls, _x: cls)},
+    ),
+    "CoordinatorEntity": type("CoordinatorEntity", (), {}),
+    "UpdateFailed": type("UpdateFailed", (Exception,), {}),
+})
+
+# Helpers — entity platform
+_install_stub("homeassistant.helpers.entity_platform", {
+    "AddEntitiesCallback": object,
+})
+
+# Helpers — aiohttp client
+_install_stub("homeassistant.helpers.aiohttp_client", {
+    "async_get_clientsession": lambda hass: None,
+})
+
+# Helpers — device registry
+_install_stub("homeassistant.helpers.device_registry", {
+    "async_get": lambda hass: types.SimpleNamespace(
+        async_get=lambda device_id: None,
+    ),
+})
+
+# Helpers — config validation
+_install_stub("homeassistant.helpers.config_validation", {
+    "string": str,
+})
+
+# Helpers — selector
+_ = sys.modules  # silence linter unused-import for sys
+selector = types.ModuleType("homeassistant.helpers.selector")
+selector.BooleanSelector = lambda: None
+selector.NumberSelector = lambda *a, **k: None
+selector.NumberSelectorConfig = lambda **k: None
+selector.NumberSelectorMode = types.SimpleNamespace(BOX="box")
+sys.modules["homeassistant.helpers.selector"] = selector

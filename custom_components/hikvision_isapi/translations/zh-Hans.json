@@ -1,0 +1,58 @@
+{
+  "config": {
+    "flow_title": "海康 {name}",
+    "step": {
+      "user": {
+        "title": "连接海康设备",
+        "description": "输入海康 NVR 或 IPC 的连接信息。",
+        "data": {
+          "host": "IP 地址",
+          "port": "端口",
+          "username": "用户名",
+          "password": "密码",
+          "verify_ssl": "验证 SSL 证书"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接设备。请检查 IP、端口和网络。",
+      "invalid_auth": "认证失败，请检查用户名和密码。",
+      "unknown": "与设备通信时发生意外错误。"
+    },
+    "abort": {
+      "already_configured": "此设备已被配置。"
+    }
+  },
+  "options": {
+    "flow_title": "海康 {name} 选项",
+    "step": {
+      "init": {
+        "title": "轮询选项",
+        "data": {
+          "scan_interval": "轮询间隔（秒）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "camera": {
+      "camera": {"name": "通道"}
+    },
+    "sensor": {
+      "model": {"name": "型号"},
+      "serial_number": {"name": "序列号"},
+      "firmware_version": {"name": "固件版本"},
+      "device_status": {"name": "设备状态"},
+      "cpu_usage": {"name": "CPU 使用率"},
+      "memory_usage": {"name": "内存使用率"},
+      "uptime": {"name": "运行时长"},
+      "channel_count": {"name": "通道数"}
+    },
+    "switch": {
+      "recording": {"name": "录像"}
+    },
+    "button": {
+      "reboot": {"name": "重启设备"}
+    }
+  }
+}

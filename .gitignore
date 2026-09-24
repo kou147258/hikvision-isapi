@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / dist
+build/
+dist/
+*.spec
+
+# Local config overrides (developer only)
+config/local.yaml
+secrets.local.yaml
+
+# HA runtime
+.deps/
+home-assistant.log
+
+# gh CLI runtime (local auth cache, device id, oauth token)
+.local/

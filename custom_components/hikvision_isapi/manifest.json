@@ -1,0 +1,13 @@
+{
+  "domain": "hikvision_isapi",
+  "name": "Hikvision ISAPI",
+  "version": "0.1.0",
+  "documentation": "https://github.com/kou147258/hikvision-isapi",
+  "issue_tracker": "https://github.com/kou147258/hikvision-isapi/issues",
+  "codeowners": ["@kou147258"],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "integration_type": "device",
+  "loggers": ["aiohttp_access"],
+  "requirements": ["aiohttp>=3.9.0,<4.0.0"]
+}

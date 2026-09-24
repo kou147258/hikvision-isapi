@@ -1,0 +1,29 @@
+ptz_goto_preset:
+  name: PTZ 转到预置位
+  description: 移动 PTZ 摄像机到指定预置位。
+  fields:
+    target:
+      name: 设备
+      description: Hikvision ISAPI 设备
+      required: true
+      selector:
+        device:
+          integration: hikvision_isapi
+    channel:
+      name: 通道
+      description: 通道 ID（1-based）
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 64
+    preset:
+      name: 预置位
+      description: 预置位编号
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 256

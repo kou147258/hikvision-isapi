@@ -1,0 +1,58 @@
+{
+  "config": {
+    "flow_title": "Hikvision {name}",
+    "step": {
+      "user": {
+        "title": "Connect to Hikvision device",
+        "description": "Enter the connection details for your Hikvision NVR or IPC.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach the device. Check the IP, port, and network.",
+      "invalid_auth": "Authentication failed. Check username and password.",
+      "unknown": "Unexpected error talking to the device."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "flow_title": "Hikvision {name} options",
+    "step": {
+      "init": {
+        "title": "Polling options",
+        "data": {
+          "scan_interval": "Poll interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "camera": {
+      "camera": {"name": "Camera"}
+    },
+    "sensor": {
+      "model": {"name": "Model"},
+      "serial_number": {"name": "Serial Number"},
+      "firmware_version": {"name": "Firmware Version"},
+      "device_status": {"name": "Device Status"},
+      "cpu_usage": {"name": "CPU Usage"},
+      "memory_usage": {"name": "Memory Usage"},
+      "uptime": {"name": "Uptime"},
+      "channel_count": {"name": "Channel Count"}
+    },
+    "switch": {
+      "recording": {"name": "Recording"}
+    },
+    "button": {
+      "reboot": {"name": "Reboot Device"}
+    }
+  }
+}
