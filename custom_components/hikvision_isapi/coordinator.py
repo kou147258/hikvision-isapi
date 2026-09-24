@@ -121,14 +121,67 @@ def normalize_device_type(raw: str) -> str:
 
 
 def _parse_system_status(root: ET.Element | None) -> dict[str, str]:
-    """Parse ``/ISAPI/System/status`` response."""
+    """Parse ``/ISAPI/System/status`` response.
+
+    Hikvision's response is::
+
+        <DeviceStatus version="2.0" ...>
+          <currentDeviceTime>2026-09-24T...</currentDeviceTime>
+          <deviceUpTime>12345</deviceUpTime>
+          <CPUList>
+            <CPU>
+              <cpuDescription>ARMv7 ...</cpuDescription>
+              <cpuUtilization>27</cpuUtilization>   (%)
+            </CPU>
+          </CPUList>
+          <MemoryList>
+            <Memory>
+              <memoryDescription>DDR Memory</memoryDescription>
+              <memoryUsage>1234</memoryUsage>         (KB on IPC, MB on NVR)
+              <memoryAvailable>5678</memoryAvailable>
+            </Memory>
+          </MemoryList>
+          <totalRebootCount>40</totalRebootCount>     (optional — IPC only)
+        </DeviceStatus>
+
+    Older / future firmwares sometimes use a flat ``<SystemStatus>``
+    schema (``<CPUUsage>`` / ``<memoryUsage>`` as direct children).
+    We accept both.
+    """
     if root is None:
-        return {}
+        return {
+            "deviceStatus": "Unknown",
+            "cpuUtilization": "0",
+            "memoryUsage": "0",
+            "memoryAvailable": "0",
+            "uptime": "0",
+            "rebootCount": None,
+            "cpuDescription": None,
+        }
+    # New schema (V5.x) — nested CPUList / MemoryList.
+    cpu = root.find(".//CPU")
+    memory = root.find(".//Memory")
+    cpu_util = _xml_text(cpu, "cpuUtilization") if cpu is not None else None
+    if cpu_util is None:
+        # Flat schema fallback
+        cpu_util = _xml_text(root, "CPUUsage")
+    mem_usage = _xml_text(memory, "memoryUsage") if memory is not None else None
+    if mem_usage is None:
+        mem_usage = _xml_text(root, "memoryUsage")
+    mem_avail = _xml_text(memory, "memoryAvailable") if memory is not None else None
+    if mem_avail is None:
+        mem_avail = _xml_text(root, "memoryFree")
+
     return {
-        "deviceStatus": _xml_text(root, "deviceStatus") or "Unknown",
-        "cpuUsage": _xml_text(root, "CPUUsage") or "0",
-        "memoryUsage": _xml_text(root, "memoryUsage") or "0",
-        "uptime": _xml_text(root, "uptime") or "0",
+        "deviceStatus": (
+            _xml_text(root, "deviceStatus") or "Unknown"
+        ),
+        "cpuUtilization": cpu_util or "0",
+        "memoryUsage": mem_usage or "0",
+        "memoryAvailable": mem_avail or "0",
+        "uptime": _xml_text(root, "deviceUpTime") or _xml_text(root, "uptime") or "0",
+        "rebootCount": _xml_text(root, "totalRebootCount"),
+        "cpuDescription": _xml_text(cpu, "cpuDescription") if cpu is not None else None,
     }
 
 
@@ -288,6 +341,73 @@ def _parse_channel_status(
         "motion_detected": (
             _xml_text(root, "motionDetection") or ""
         ).lower() == "true",
+    }
+
+
+def _parse_channel_status_extended(
+    root: ET.Element | None,
+) -> dict[str, Any]:
+    """Extended per-channel status (v0.5.0).
+
+    Same schema as ``_parse_channel_status`` but reads additional
+    fields useful for IPC health monitoring:
+
+    - ``uptime`` (seconds) — device uptime, same value as
+      ``/ISAPI/System/status``'s ``deviceUpTime``.
+    - ``reboot_count`` — total device reboots.
+    - ``sd_card_writes`` — ``SDCardStatusInfo/videoRewritingTimes`` for
+      IPCs with SD cards; the most actionable health indicator
+      (SD cards typically last ~3,000-5,000 rewrite cycles before
+      failing).
+    - ``camera_run_total_time`` — ``Camera/cameraRunTotalTime`` for
+      PTZ IPCs.
+    - ``dome_heat_state`` / ``dome_fan_state`` — ``DomeInfo/heatState``
+      / ``DomeInfo/fanState`` (0=ok, 1=running/active).
+    - ``dome_runtime_over_40`` — ``DomeInfo/runtimeOverPositiveforty``
+      (cumulative seconds operating above 40°C; high = thermal
+      stress).
+    """
+    if root is None:
+        return {
+            "online": False,
+            "recording": False,
+            "motion_detected": False,
+            "uptime": None,
+            "reboot_count": None,
+            "sd_card_writes": None,
+            "camera_run_total_time": None,
+            "dome_heat_state": None,
+            "dome_fan_state": None,
+            "dome_runtime_over_40": None,
+        }
+    dome = root.find(".//DomeInfo")
+    camera = root.find(".//Camera")
+    sdcard = root.find(".//SDCardStatusInfo")
+    return {
+        "online": (_xml_text(root, "online") or "").lower() == "true",
+        "recording": (
+            (_xml_text(root, "recordStatus") or "").lower() == "recording"
+        ),
+        "motion_detected": (
+            _xml_text(root, "motionDetection") or ""
+        ).lower() == "true",
+        "uptime": _xml_text(root, "deviceUpTime") or _xml_text(root, "uptime"),
+        "reboot_count": _xml_text(root, "totalRebootCount"),
+        "sd_card_writes": (
+            _xml_text(sdcard, "videoRewritingTimes") if sdcard is not None else None
+        ),
+        "camera_run_total_time": (
+            _xml_text(camera, "cameraRunTotalTime") if camera is not None else None
+        ),
+        "dome_heat_state": (
+            _xml_text(dome, "heatState") if dome is not None else None
+        ),
+        "dome_fan_state": (
+            _xml_text(dome, "fanState") if dome is not None else None
+        ),
+        "dome_runtime_over_40": (
+            _xml_text(dome, "runtimeOverPositiveforty") if dome is not None else None
+        ),
     }
 
 
@@ -485,7 +605,7 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                     status_xml = await client.get_xml(
                         ISAPI_INPUT_PROXY_CHANNELS_STATUS.format(id=ch_id)
                     )
-                ch_status = _parse_channel_status(status_xml)
+                ch_status = _parse_channel_status_extended(status_xml)
                 # Only override fields that the per-channel endpoint
                 # actually reported (non-default). This way, the
                 # channel-list's online/recording values stay when the
@@ -495,6 +615,22 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                     ch_status["recording"] or ch.get("recording", False)
                 )
                 ch["motion_detected"] = ch_status["motion_detected"]
+                # v0.5.0 — extended IPC health fields. The endpoint
+                # reports the device uptime (not the channel's); useful
+                # for the binary_sensor platforms and the new per-channel
+                # sensor entities.
+                for k in (
+                    "uptime",
+                    "reboot_count",
+                    "sd_card_writes",
+                    "camera_run_total_time",
+                    "dome_heat_state",
+                    "dome_fan_state",
+                    "dome_runtime_over_40",
+                ):
+                    v = ch_status.get(k)
+                    if v is not None:
+                        ch[k] = v
             except ISAPIError as exc:
                 _LOGGER.debug(
                     "Per-channel status unavailable for %s ch %s: %s",

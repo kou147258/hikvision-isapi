@@ -55,7 +55,13 @@
       "network_subnet": {"name": "子网掩码"},
       "network_gateway": {"name": "默认网关"},
       "network_mac": {"name": "MAC 地址"},
-      "channel_1_bitrate": {"name": "通道 1 平均码率"}
+      "channel_1_bitrate": {"name": "通道 1 平均码率"},
+      "device_uptime": {"name": "运行时长"},
+      "device_uptime_hours": {"name": "运行时长（小时）"},
+      "reboot_count": {"name": "重启次数"},
+      "cpu_model": {"name": "CPU 型号"},
+      "sd_card_writes": {"name": "SD 卡写入次数"},
+      "dome_high_temp_runtime": {"name": "球机高温累计运行"}
     },
     "switch": {
       "recording": {"name": "录像"}

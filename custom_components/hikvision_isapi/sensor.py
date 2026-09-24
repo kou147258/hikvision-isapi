@@ -197,6 +197,108 @@ SENSORS: tuple[HikvisionISAPISensorDescription, ...] = (
         icon="mdi:video",
         value_fn=lambda d: d.streaming_bitrate_kbps.get("1"),
     ),
+    # ---- v0.5.0 — device-level health (from /ISAPI/System/status) ----
+    # Note: cpu / memory / device status are already exposed as
+    # separate sensors above. We add the remaining device-level
+    # health fields that the same endpoint already returns. The
+    # endpoint reports uptime, reboot count, and cpu description;
+    # for IPCs that also expose <deviceTemperature>, our v0.5.0
+    # parser captures that as data["deviceTemperature"] but we
+    # intentionally do NOT expose it as a sensor — the user said
+    # skip temperature.
+    HikvisionISAPISensorDescription(
+        key="device_uptime",
+        translation_key="device_uptime",
+        name="运行时长",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        icon="mdi:clock-outline",
+        value_fn=lambda d: _safe_int(d.system_status.get("uptime")),
+    ),
+    HikvisionISAPISensorDescription(
+        key="device_uptime_hours",
+        translation_key="device_uptime_hours",
+        name="运行时长（小时）",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        icon="mdi:clock-outline",
+        # uptime in hours, rounded to 1 decimal
+        value_fn=lambda d: _uptime_hours(d.system_status.get("uptime")),
+    ),
+    HikvisionISAPISensorDescription(
+        key="reboot_count",
+        translation_key="reboot_count",
+        name="重启次数",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:restart",
+        value_fn=lambda d: _safe_int(d.system_status.get("rebootCount")),
+    ),
+    HikvisionISAPISensorDescription(
+        key="cpu_model",
+        translation_key="cpu_model",
+        name="CPU 型号",
+        icon="mdi:cpu-64-bit",
+        value_fn=lambda d: d.system_status.get("cpuDescription"),
+    ),
+    # ---- v0.5.0 — per-channel health (from per-channel status) ----
+    # For single-channel devices (most IPCs), the per-channel values
+    # are also the device values. We use the first channel's data
+    # as a convenience; users with multi-channel NVRs can read the
+    # per-channel binary_sensor entities (v0.3.0) for the same info
+    # on a per-channel basis.
+    HikvisionISAPISensorDescription(
+        key="device_uptime",
+        translation_key="device_uptime",
+        name="运行时长",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        icon="mdi:clock-outline",
+        value_fn=lambda d: _safe_int(
+            _first_channel_field(d, "uptime")
+        ),
+    ),
+    HikvisionISAPISensorDescription(
+        key="sd_card_writes",
+        translation_key="sd_card_writes",
+        name="SD 卡写入次数",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:sd",
+        # SDCardStatusInfo/videoRewritingTimes — SD cards typically
+        # last ~3,000-5,000 rewrite cycles before failing. A high
+        # value here is an early warning that the SD card is wearing
+        # out. IPC only.
+        value_fn=lambda d: _safe_int(
+            _first_channel_field(d, "sd_card_writes")
+        ),
+    ),
+    HikvisionISAPISensorDescription(
+        key="reboot_count",
+        translation_key="reboot_count",
+        name="重启次数",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:restart",
+        value_fn=lambda d: _safe_int(
+            _first_channel_field(d, "reboot_count")
+        ),
+    ),
+    HikvisionISAPISensorDescription(
+        key="dome_high_temp_runtime",
+        translation_key="dome_high_temp_runtime",
+        name="球机高温累计运行",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        icon="mdi:thermometer-high",
+        # DomeInfo/runtimeOverPositiveforty — cumulative seconds the
+        # PTZ dome operated above 40°C. High = thermal stress on
+        # dome electronics.
+        value_fn=lambda d: _safe_int(
+            _first_channel_field(d, "dome_runtime_over_40")
+        ),
+    ),
 )
 
 
@@ -212,6 +314,14 @@ def _mb_to_gb(mb: int | None) -> float | None:
     if mb is None:
         return None
     return round(mb / 1024, 1)
+
+
+def _uptime_hours(uptime_value: Any) -> float | None:
+    """Convert uptime seconds to hours, rounded to 1 decimal."""
+    secs = _safe_int(uptime_value)
+    if secs is None:
+        return None
+    return round(secs / 3600, 1)
 
 
 def _storage_usage_pct(storage: dict[str, Any]) -> float | None:
@@ -230,6 +340,15 @@ def _first_iface(data: HikvisionISAPIData, field: str) -> str | None:
         return None
     value = ifaces[0].get(field)
     return value or None
+
+
+def _first_channel_field(
+    data: HikvisionISAPIData, field: str, default: Any = None
+) -> Any:
+    """Return ``field`` from the first channel (for single-channel IPCs)."""
+    if not data.channels:
+        return default
+    return data.channels[0].get(field, default)
 
 
 async def async_setup_entry(

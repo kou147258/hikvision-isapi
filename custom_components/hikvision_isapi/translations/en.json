@@ -55,7 +55,13 @@
       "network_subnet": {"name": "Subnet Mask"},
       "network_gateway": {"name": "Default Gateway"},
       "network_mac": {"name": "MAC Address"},
-      "channel_1_bitrate": {"name": "Channel 1 Bitrate"}
+      "channel_1_bitrate": {"name": "Channel 1 Bitrate"},
+      "device_uptime": {"name": "Uptime"},
+      "device_uptime_hours": {"name": "Uptime (hours)"},
+      "reboot_count": {"name": "Reboot Count"},
+      "cpu_model": {"name": "CPU Model"},
+      "sd_card_writes": {"name": "SD Card Writes"},
+      "dome_high_temp_runtime": {"name": "Dome High Temp Runtime"}
     },
     "switch": {
       "recording": {"name": "Recording"}

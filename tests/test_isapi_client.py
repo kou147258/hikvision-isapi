@@ -12,6 +12,7 @@ import hashlib
 
 from custom_components.hikvision_isapi.coordinator import (
     _parse_channel_status,
+    _parse_channel_status_extended,
     _parse_channels,
     _parse_device_info,
     _parse_network_interfaces,
@@ -214,8 +215,12 @@ def test_parse_system_status_extracts_fields():
     root = ET.fromstring(xml)
     status = _parse_system_status(root)
     assert status["deviceStatus"] == "OK"
-    assert status["cpuUsage"] == "27"
+    assert status["cpuUtilization"] == "27"
     assert status["memoryUsage"] == "35"
+    # memoryAvailable isn't in this flat XML — the parser falls back
+    # to the "0" default rather than None (we want the sensor to
+    # always have a numeric value).
+    assert status["memoryAvailable"] == "0"
     assert status["uptime"] == "12345"
 
 
@@ -440,3 +445,134 @@ def test_normalize_device_type_defaults_to_ipcamera():
     assert normalize_device_type("") == "ipcamera"
     assert normalize_device_type("UnknownType") == "ipcamera"
     assert normalize_device_type(None) == "ipcamera"
+
+
+# ---- v0.5.0 — nested <CPUList>/<MemoryList> schema ----
+
+
+def test_parse_system_status_nested_schema():
+    """V5.x schema: <CPUList><CPU><cpuUtilization>… + <MemoryList>…"""
+    from xml.etree import ElementTree as ET
+
+    xml = """<DeviceStatus version="2.0">
+        <currentDeviceTime>2026-09-24T16:42:03+08:00</currentDeviceTime>
+        <deviceUpTime>92914</deviceUpTime>
+        <CPUList>
+            <CPU>
+                <cpuDescription>ARM926EJ-Sid(wb)</cpuDescription>
+                <cpuUtilization>16</cpuUtilization>
+            </CPU>
+        </CPUList>
+        <MemoryList>
+            <Memory>
+                <memoryDescription>DDR Memory</memoryDescription>
+                <memoryUsage>99</memoryUsage>
+                <memoryAvailable>9696</memoryAvailable>
+            </Memory>
+        </MemoryList>
+        <totalRebootCount>40</totalRebootCount>
+    </DeviceStatus>"""
+    status = _parse_system_status(ET.fromstring(xml))
+    assert status["deviceStatus"] == "Unknown"  # not present, default
+    assert status["cpuUtilization"] == "16"
+    assert status["memoryUsage"] == "99"
+    assert status["memoryAvailable"] == "9696"
+    assert status["uptime"] == "92914"
+    assert status["rebootCount"] == "40"
+    assert status["cpuDescription"] == "ARM926EJ-Sid(wb)"
+
+
+def test_parse_system_status_nvr_decimal_memory():
+    """NVRs report memoryUsage as decimal MB (e.g. 1116.457031)."""
+    from xml.etree import ElementTree as ET
+
+    xml = """<DeviceStatus>
+        <deviceUpTime>86343</deviceUpTime>
+        <CPUList>
+            <CPU>
+                <cpuDescription>ARMv7 Processor rev 1 (v7l)</cpuDescription>
+                <cpuUtilization>7</cpuUtilization>
+            </CPU>
+        </CPUList>
+        <MemoryList>
+            <Memory>
+                <memoryDescription>DDR Memory</memoryDescription>
+                <memoryUsage>1116.457031</memoryUsage>
+                <memoryAvailable>13.5</memoryAvailable>
+            </Memory>
+        </MemoryList>
+    </DeviceStatus>"""
+    status = _parse_system_status(ET.fromstring(xml))
+    assert status["cpuUtilization"] == "7"
+    assert status["memoryUsage"] == "1116.457031"
+    assert status["memoryAvailable"] == "13.5"
+    assert status["uptime"] == "86343"
+    assert status["rebootCount"] is None  # NVR doesn't have this field
+    assert status["cpuDescription"] == "ARMv7 Processor rev 1 (v7l)"
+
+
+def test_parse_system_status_handles_empty_root():
+    """None → all defaults, rebootCount/cpuDescription None."""
+    status = _parse_system_status(None)
+    assert status["deviceStatus"] == "Unknown"
+    assert status["cpuUtilization"] == "0"
+    assert status["memoryUsage"] == "0"
+    assert status["memoryAvailable"] == "0"
+    assert status["uptime"] == "0"
+    assert status["rebootCount"] is None
+    assert status["cpuDescription"] is None
+
+
+def test_parse_channel_status_extended_includes_health_fields():
+    """v0.5.0 — extract SD card writes / reboot / uptime / dome info."""
+    from xml.etree import ElementTree as ET
+
+    xml = """<InputProxyChannelStatus>
+        <online>true</online>
+        <recordStatus>recording</recordStatus>
+        <motionDetection>false</motionDetection>
+        <deviceUpTime>594666</deviceUpTime>
+        <totalRebootCount>40</totalRebootCount>
+        <SDCardStatusInfo>
+            <videoRewritingTimes>3581</videoRewritingTimes>
+        </SDCardStatusInfo>
+        <Camera>
+            <cameraRunTotalTime>594666</cameraRunTotalTime>
+        </Camera>
+        <DomeInfo>
+            <domeRunTotalTime>594666</domeRunTotalTime>
+            <heatState>0</heatState>
+            <fanState>1</fanState>
+            <runtimeOverPositiveforty>346495</runtimeOverPositiveforty>
+        </DomeInfo>
+    </InputProxyChannelStatus>"""
+    status = _parse_channel_status_extended(ET.fromstring(xml))
+    # v0.3.0 fields
+    assert status["online"] is True
+    assert status["recording"] is True
+    assert status["motion_detected"] is False
+    # v0.5.0 fields
+    assert status["uptime"] == "594666"
+    assert status["reboot_count"] == "40"
+    assert status["sd_card_writes"] == "3581"
+    assert status["camera_run_total_time"] == "594666"
+    assert status["dome_heat_state"] == "0"
+    assert status["dome_fan_state"] == "1"
+    assert status["dome_runtime_over_40"] == "346495"
+
+
+def test_parse_channel_status_extended_handles_missing_optional_sections():
+    """Missing SDCardStatusInfo / Camera / DomeInfo → all optional None."""
+    from xml.etree import ElementTree as ET
+
+    xml = """<InputProxyChannelStatus>
+        <online>false</online>
+        <recordStatus>idle</recordStatus>
+    </InputProxyChannelStatus>"""
+    status = _parse_channel_status_extended(ET.fromstring(xml))
+    assert status["online"] is False
+    assert status["recording"] is False
+    assert status["uptime"] is None
+    assert status["reboot_count"] is None
+    assert status["sd_card_writes"] is None
+    assert status["dome_heat_state"] is None
