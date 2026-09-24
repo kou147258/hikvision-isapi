@@ -37,7 +37,8 @@ from custom_components.hikvision_isapi_performance.coordinator import (
 # ---- manifest ----
 
 
-def test_v0614_manifest_version_bumped():
+def test_v0614_manifest_version_at_or_beyond_0_6_14():
+    """v0.6.14 anchor; later releases may bump further."""
     from custom_components.hikvision_isapi_performance import (
         isapi_client as _unused_check_imports,
     )
@@ -45,7 +46,11 @@ def test_v0614_manifest_version_bumped():
         r"C:\Users\43457\Desktop\hikvision-isapi"
         r"\custom_components\hikvision_isapi_performance\manifest.json"
     ).read_text(encoding="utf-8"))
-    assert manifest["version"] == "0.6.14"
+    parts = manifest["version"].split(".")
+    assert parts[0] == "0"
+    assert int(parts[1]) >= 6
+    if int(parts[1]) == 6:
+        assert int(parts[2]) >= 14
 
 
 # ---- coordinator has the per-endpoint helper methods ----

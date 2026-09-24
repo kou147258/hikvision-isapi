@@ -271,29 +271,105 @@ def _parse_streaming_channels_list(
 
 
 def _parse_storage(root: ET.Element | None) -> dict[str, Any]:
-    """Parse ``/ISAPI/ContentMgmt/storage`` response (NVR / DVR only).
+    """Parse ``/ISAPI/ContentMgmt/storage`` (V5) or
+    ``/ISAPI/System/Storage/hardDisks`` (V4 NVR fallback).
 
-    Hikvision's response shape is::
+    Two Hikvision shapes are accepted.
 
-        <Storage>
+    **V5 (newer firmware)** — direct fields::
+
+        <Storage xmlns="...">
           <totalCapacity>2000000</totalCapacity>          (MB)
           <usedCapacity>1234567</usedCapacity>           (MB)
           <freeCapacity>765433</freeCapacity>            (MB)
-          <status>normal</status>                        (normal | exception)
+          <status>normal</status>
         </Storage>
+
+    **V4.x firmware** (e.g. ``DS-7708N-I4`` V4.1.18)::
+
+        <Storage xmlns="...">
+          <hddList>
+            <HDD>
+              <id>1</id>
+              <size>2000396746752</size>           (bytes)
+              <freeSize>1234567890123</freeSize>   (bytes)
+              <status>normal</status>
+            </HDD>
+            <HDD>
+              <id>2</id>
+              <size>4000796746752</size>
+              <freeSize>...</freeSize>
+              <status>normal</status>
+            </HDD>
+          </hddList>
+        </Storage>
+
+    V4 returns total/used/free in *bytes*, per-HDD. We sum across
+    all HDDs and convert to MB (1 MB = 1 000 000 bytes, matching
+    V5's MB convention; 1 GiB = 1024³ would give slightly different
+    numbers, but consistency with V5 wins here).
     """
+    empty = {
+        "total_mb": None,
+        "used_mb": None,
+        "free_mb": None,
+        "status": "unknown",
+    }
     if root is None:
+        return empty
+
+    # V5 path: direct fields.
+    total_mb = _safe_int_mb(_xml_text(root, "totalCapacity"))
+    used_mb = _safe_int_mb(_xml_text(root, "usedCapacity"))
+    free_mb = _safe_int_mb(_xml_text(root, "freeCapacity"))
+    status = _xml_text(root, "status")
+
+    if total_mb is not None or used_mb is not None or free_mb is not None:
+        # V5 shape — done.
         return {
-            "total_mb": None,
-            "used_mb": None,
-            "free_mb": None,
-            "status": "unknown",
+            "total_mb": total_mb,
+            "used_mb": used_mb,
+            "free_mb": free_mb,
+            "status": status or "unknown",
         }
+
+    # V4 path: sum over <hddList><HDD><size>/<freeSize>.
+    hdds = root.findall(".//HDD")
+    if not hdds:
+        return empty
+
+    total_bytes = 0
+    free_bytes = 0
+    status_aggregate = "normal"
+    seen = False
+    for hdd in hdds:
+        size_raw = _safe_int_mb(_xml_text(hdd, "size"))
+        free_raw = _safe_int_mb(_xml_text(hdd, "freeSize"))
+        if size_raw is None and free_raw is None:
+            continue
+        seen = True
+        if size_raw is not None:
+            total_bytes += size_raw
+        if free_raw is not None:
+            free_bytes += free_raw
+        hdd_status = _xml_text(hdd, "status")
+        if hdd_status and hdd_status != "normal":
+            status_aggregate = "exception"
+
+    if not seen:
+        return empty
+
     return {
-        "total_mb": _safe_int_mb(_xml_text(root, "totalCapacity")),
-        "used_mb": _safe_int_mb(_xml_text(root, "usedCapacity")),
-        "free_mb": _safe_int_mb(_xml_text(root, "freeCapacity")),
-        "status": _xml_text(root, "status") or "unknown",
+        # Convert bytes → MB using decimal (1 MB = 10^6 bytes) so
+        # the value matches V5's MB convention.
+        "total_mb": round(total_bytes / 1_000_000, 1) if total_bytes else None,
+        "used_mb": (
+            round((total_bytes - free_bytes) / 1_000_000, 1)
+            if total_bytes and free_bytes
+            else None
+        ),
+        "free_mb": round(free_bytes / 1_000_000, 1) if free_bytes else None,
+        "status": status_aggregate,
     }
 
 
@@ -874,6 +950,32 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         storage = _parse_storage(storage_xml)
         network_interfaces = _parse_network_interfaces(network_xml)
         streaming_bitrate_kbps = _parse_streaming_channels(streaming_xml)
+
+        # v0.6.15: refresh summary log. One INFO line per refresh
+        # showing which categories of data populated and which didn't.
+        # The user can paste this single line back to confirm where
+        # the data gaps are, without having to read every other
+        # log line. Helps especially for V4 NVRs where some
+        # endpoints return 404 due to firmware version differences.
+        def _okfmt(value):
+            """Format a category summary: count or 'missing'."""
+            if isinstance(value, list):
+                return str(len(value))
+            if isinstance(value, dict):
+                return "OK" if value else "missing"
+            return "OK" if value else "missing"
+
+        _LOGGER.info(
+            "%s refresh summary: device_info=%s channels=%s "
+            "storage=%s network=%s status=%s bitrate=%s",
+            self._host,
+            _okfmt(device_info),
+            _okfmt(channels),
+            _okfmt(storage),
+            _okfmt(network_interfaces),
+            _okfmt(system_status),
+            _okfmt(streaming_bitrate_kbps),
+        )
 
         # v0.6.9 — per-channel status endpoint chosen by device type.
         # IPCs use /Streaming/channels/{id}/status, NVR/DVRs use
