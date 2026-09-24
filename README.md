@@ -33,25 +33,25 @@ that SNMP doesn't expose.
 - **Sensors** — model, serial, firmware, device status, CPU usage, memory usage, uptime, channel count.
 - **Switch** — per-channel recording on/off (`/ISAPI/ContentMgmt/InputProxy/channels/{id}/capabilities?recording=On|Off`).
 - **Button** — reboot the device (`PUT /ISAPI/System/reboot`).
-- **Service** — `hikvision_isapi.ptz_goto_preset` to move a PTZ camera to a named preset.
+- **Service** — `hikvision_isapi_performance.ptz_goto_preset` to move a PTZ camera to a named preset.
 
 ## Installation
 
 ### HACS (recommended)
 
 1. Install [HACS](https://hacs.xyz/).
-2. HACS → Integrations → ⋯ → **Custom repositories** → add `https://github.com/kou147258/hikvision-isapi` as **Integration**.
-3. Refresh, find **Hikvision ISAPI**, install.
+2. HACS → Integrations → ⋯ → **Custom repositories** → add `https://github.com/kou147258/hikvision-isapi-performance` as **Integration**.
+3. Refresh, find **Hikvision ISAPI Performance**, install.
 4. Restart Home Assistant.
 
 ### Manual
 
-1. Copy `custom_components/hikvision_isapi/` into your HA `config/custom_components/` directory.
+1. Copy `custom_components/hikvision_isapi_performance/` into your HA `config/custom_components/` directory.
 2. Restart Home Assistant.
 
 ## Configure
 
-1. **Settings → Devices & Services → Add Integration → Hikvision ISAPI**.
+1. **Settings → Devices & Services → Add Integration → Hikvision ISAPI Performance**.
 2. Step 1 — enter the device IP, port (default 443), username, password, and whether to verify SSL (most Hikvision devices use self-signed certs, so leave this off).
 3. The integration tests the connection by GETting `/ISAPI/System/deviceInfo`. On success, the entry is created and the coordinator's first refresh runs in the background.
 
@@ -80,7 +80,7 @@ that SNMP doesn't expose.
 
 ## Services
 
-### `hikvision_isapi.ptz_goto_preset`
+### `hikvision_isapi_performance.ptz_goto_preset`
 
 Move a PTZ channel to a named preset.
 
@@ -90,7 +90,7 @@ Fields:
 - `preset` — preset number (1-256)
 
 ```yaml
-service: hikvision_isapi.ptz_goto_preset
+service: hikvision_isapi_performance.ptz_goto_preset
 data:
   device_id: abc123...
   channel: 1
@@ -120,7 +120,7 @@ MIT © 2026 43457. See `LICENSE`.
   🌐 <a href="#english">English</a> · <a href="#简体中文"><b>简体中文</b></a>
 </p>
 
-# Hikvision ISAPI（简体中文）
+# Hikvision ISAPI Performance（简体中文）
 
 一个用于海康威视 NVR / IPC 的 Home Assistant 自定义集成，**通过 ISAPI HTTP 接口**（区别于 [hikvision-snmp](https://github.com/kou147258/hikvision-snmp) 那个走 SNMP）。支持摄像头快照、系统 sensor、通道录像开关、重启按钮和 PTZ 预置位服务。
 
@@ -130,25 +130,25 @@ MIT © 2026 43457. See `LICENSE`.
 - **Sensor 实体** — 型号、序列号、固件版本、设备状态、CPU、内存、运行时长、通道数
 - **Switch 实体** — 每通道录像开关（`/ISAPI/ContentMgmt/InputProxy/channels/{id}/capabilities?recording=On|Off`）
 - **Button 实体** — 设备重启（`PUT /ISAPI/System/reboot`）
-- **Service** — `hikvision_isapi.ptz_goto_preset` PTZ 预置位
+- **Service** — `hikvision_isapi_performance.ptz_goto_preset` PTZ 预置位
 
 ## 安装
 
 #### HACS（推荐）
 
 1. 安装 [HACS](https://hacs.xyz/)。
-2. HACS → Integrations → ⋯ → **Custom repositories** → 添加 `https://github.com/kou147258/hikvision-isapi`，类型选 **Integration**。
-3. 刷新列表，找到 **Hikvision ISAPI**，安装。
+2. HACS → Integrations → ⋯ → **Custom repositories** → 添加 `https://github.com/kou147258/hikvision-isapi-performance`，类型选 **Integration**。
+3. 刷新列表，找到 **Hikvision ISAPI Performance**，安装。
 4. 重启 Home Assistant。
 
 #### 手动安装
 
-1. 复制 `custom_components/hikvision_isapi/` 目录到 HA 的 `config/custom_components/` 下。
+1. 复制 `custom_components/hikvision_isapi_performance/` 目录到 HA 的 `config/custom_components/` 下。
 2. 重启 Home Assistant。
 
 ## 配置
 
-1. **设置 → 设备与服务 → 添加集成 → Hikvision ISAPI**。
+1. **设置 → 设备与服务 → 添加集成 → Hikvision ISAPI Performance**。
 2. 步骤 1 — 输入设备 IP、端口（默认 443）、用户名、密码，以及是否验证 SSL（大多数海康设备用自签名证书，关掉这个）。
 3. 集成会 GET `/ISAPI/System/deviceInfo` 测试连接。成功后 entry 创建，coordinator 在后台开始首次 refresh。
 
@@ -177,7 +177,7 @@ MIT © 2026 43457. See `LICENSE`.
 
 ## Service
 
-### `hikvision_isapi.ptz_goto_preset`
+### `hikvision_isapi_performance.ptz_goto_preset`
 
 把 PTZ 通道移到指定预置位。
 
@@ -187,7 +187,7 @@ MIT © 2026 43457. See `LICENSE`.
 - `preset` — 预置位编号（1-256）
 
 ```yaml
-service: hikvision_isapi.ptz_goto_preset
+service: hikvision_isapi_performance.ptz_goto_preset
 data:
   device_id: abc123...
   channel: 1

@@ -8,7 +8,7 @@ ptz_goto_preset:
       required: true
       selector:
         device:
-          integration: hikvision_isapi
+          integration: hikvision_isapi_performance
     channel:
       name: 通道
       description: 通道 ID（1-based）
