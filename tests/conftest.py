@@ -46,7 +46,8 @@ _install_stub("homeassistant.const", {
         SWITCH="switch",
         BUTTON="button",
     ),
-    "UnitOfTime": types.SimpleNamespace(SECONDS="s"),
+    "UnitOfTime": types.SimpleNamespace(SECONDS="s", HOURS="h"),
+    "UnitOfInformation": types.SimpleNamespace(MEGABYTES="MB", GIGABYTES="GB"),
     "ATTR_DEVICE_ID": "device_id",
 })
 
@@ -71,10 +72,18 @@ _install_stub("homeassistant.components.camera", {
 })
 
 # Components — sensor
+def _sed_init(self, **kwargs):
+    """Stub __init__ that accepts any kwargs (real HA is a dataclass)."""
+    for k, v in kwargs.items():
+        setattr(self, k, v)
+
+
 _install_stub("homeassistant.components.sensor", {
     "SensorDeviceClass": types.SimpleNamespace(DURATION="duration"),
     "SensorEntity": type("SensorEntity", (), {}),
-    "SensorEntityDescription": type("SensorEntityDescription", (), {}),
+    "SensorEntityDescription": type(
+        "SensorEntityDescription", (), {"__init__": _sed_init},
+    ),
     "SensorStateClass": types.SimpleNamespace(
         MEASUREMENT="measurement", TOTAL_INCREASING="total_increasing"
     ),

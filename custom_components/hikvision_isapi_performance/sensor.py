@@ -248,10 +248,18 @@ SENSORS: tuple[HikvisionISAPISensorDescription, ...] = (
     # as a convenience; users with multi-channel NVRs can read the
     # per-channel binary_sensor entities (v0.3.0) for the same info
     # on a per-channel basis.
+    #
+    # v0.6.5 fix: previously the ``device_uptime`` and ``reboot_count``
+    # keys here collided with the same-named entries above (sourced
+    # from /ISAPI/System/status). Both produced the same unique_id
+    # ``{entry_id}_device_uptime`` / ``{entry_id}_reboot_count`` and HA
+    # logged "does not generate unique IDs - ignoring". Renamed to
+    # ``channel_1_*`` so the per-channel readings show up as their own
+    # sensors (which is what the v0.5.0 docs implied they should be).
     HikvisionISAPISensorDescription(
-        key="device_uptime",
-        translation_key="device_uptime",
-        name="运行时长",
+        key="channel_1_uptime",
+        translation_key="channel_1_uptime",
+        name="通道 1 运行时长",
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.TOTAL_INCREASING,
         native_unit_of_measurement=UnitOfTime.SECONDS,
@@ -275,9 +283,9 @@ SENSORS: tuple[HikvisionISAPISensorDescription, ...] = (
         ),
     ),
     HikvisionISAPISensorDescription(
-        key="reboot_count",
-        translation_key="reboot_count",
-        name="重启次数",
+        key="channel_1_reboot_count",
+        translation_key="channel_1_reboot_count",
+        name="通道 1 重启次数",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:restart",
         value_fn=lambda d: _safe_int(

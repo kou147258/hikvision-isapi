@@ -64,7 +64,7 @@ from .const import (
     ISAPI_SYSTEM_STATUS,
     ISAPI_SYSTEM_STORAGE_HARDDISKS,
 )
-from .isapi_client import ISAPIConnectionError, ISAPIClient, ISAPIError
+from .isapi_client import ISAPIAuthError, ISAPIConnectionError, ISAPIClient, ISAPIError
 
 _LOGGER = logging.getLogger(__name__)
 
