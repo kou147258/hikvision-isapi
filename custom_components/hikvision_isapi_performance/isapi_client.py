@@ -300,135 +300,194 @@ class ISAPIClient:
         body: str | None = None,
         content_type: str | None = None,
     ) -> str:
-        if resp.status in (401, 403):
-            # Auth handshake. The device's response shape decides which
-            # path we take:
-            #
-            # 1. ``WWW-Authenticate: Digest realm="..." nonce="..." qop="auth"``
-            #    — most modern Hikvision devices. Compute Digest per
-            #    RFC 2617 and retry.
-            # 2. ``WWW-Authenticate: Basic realm="..."`` — older firmware
-            #    on some V4.x NVRs and early IPCs. Send Basic auth.
-            # 3. Empty / missing / unrecognized header — some devices
-            #    reply with HTTP 403 + empty WWW-Authenticate (server-
-            #    side config quirk, not uncommon on
-            #    ``/ISAPI/ContentMgmt/InputProxy/channels`` and friends).
-            #    Try Basic auth as a last-ditch fallback; many cameras
-            #    accept it when their Digest path is misconfigured.
-            www_auth = resp.headers.get("WWW-Authenticate", "").strip()
-            challenge = _parse_digest_challenge(www_auth) if www_auth else None
-            if challenge is None:
-                # Try Basic auth fallback. We only do this on 401/403 so
-                # we don't send Basic creds on the first request.
-                basic_header = _build_basic_header(self._username, self._password)
-                url = str(resp.url)
-                retry_headers: dict[str, str] = {"Authorization": basic_header}
-                if content_type:
-                    retry_headers["Content-Type"] = content_type
-                try:
-                    async with self._session.request(
-                        method, url, data=body, headers=retry_headers,
-                    ) as retry_resp:
-                        if retry_resp.status in (200, 201, 204):
-                            # Basic auth worked — return the body.
-                            return await retry_resp.text()
-                        # Still failing. Try a Digest handshake in case
-                        # the device advertises Digest on the second hit.
-                        retry_www_auth = retry_resp.headers.get(
-                            "WWW-Authenticate", ""
-                        ).strip()
-                        retry_challenge = (
-                            _parse_digest_challenge(retry_www_auth)
-                            if retry_www_auth else None
-                        )
-                        if retry_challenge is not None:
-                            digest_header = _build_digest_header(
-                                self._username, self._password,
-                                method, path, retry_challenge,
-                            )
-                            digest_headers: dict[str, str] = {
-                                "Authorization": digest_header,
-                            }
-                            if content_type:
-                                digest_headers["Content-Type"] = content_type
-                            async with self._session.request(
-                                method, url, data=body, headers=digest_headers,
-                            ) as digest_resp:
-                                return await self._read_response_text(
-                                    digest_resp, path, method,
-                                    body=body, content_type=content_type,
-                                )
-                        # Both Basic and Digest failed. Surface the
-                        # original 401/403 with whatever header the
-                        # device sent (often empty).
-                        raise ISAPIAuthError(
-                            f"HTTP {resp.status} on {resp.url}: "
-                            f"unrecognized WWW-Authenticate: {www_auth[:120]}",
-                            status_code=resp.status,
-                        )
-                except ISAPIAuthError:
-                    raise
-                except (ClientError, asyncio.TimeoutError) as exc:
-                    raise ISAPIConnectionError(str(exc)) from exc
+        # v0.6.8: refactored from recursion to a single linear flow
+        # to prevent infinite loops when the device keeps returning
+        # 401 (e.g. Digest computation fails on a password with
+        # non-UTF-8 bytes, or the server is misconfigured). Pre-v0.6.8
+        # the recursive call to ``_read_response_text`` from inside
+        # the auth handshake branch could recurse unbounded when the
+        # retry response was itself a 401.
+        if resp.status not in (401, 403):
+            if resp.status >= 400:
+                body_text = await resp.text()
+                raise ISAPIError(
+                    f"HTTP {resp.status} on {resp.url}: {body_text[:200]}",
+                    status_code=resp.status,
+                )
+            return await resp.text()
 
-            # Digest path — most common.
-            auth_header = _build_digest_header(
-                self._username, self._password, method, path, challenge
-            )
-            url = str(resp.url)
-            retry_headers = {"Authorization": auth_header}
-            if content_type:
-                retry_headers["Content-Type"] = content_type
-            try:
-                async with self._session.request(
-                    method, url, data=body, headers=retry_headers,
-                ) as retry_resp:
-                    return await self._read_response_text(
-                        retry_resp, path, method,
-                        body=body, content_type=content_type,
-                    )
-            except ISAPIAuthError:
-                raise
-            except (ClientError, asyncio.TimeoutError) as exc:
-                raise ISAPIConnectionError(str(exc)) from exc
-        if resp.status >= 400:
-            body_text = await resp.text()
-            raise ISAPIError(
-                f"HTTP {resp.status} on {resp.url}: {body_text[:200]}",
+        # Need auth. Pre-validate credentials are UTF-8 encodable so we
+        # don't UnicodeEncodeError inside the Digest computation.
+        try:
+            self._username.encode("utf-8")
+            self._password.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ISAPIAuthError(
+                f"Credentials contain invalid UTF-8 bytes "
+                f"(position {exc.start}-{exc.end}): "
+                f"username or password has surrogates that can't be "
+                f"encoded for ISAPI Digest auth. Re-enter the "
+                f"password using only standard ASCII characters.",
                 status_code=resp.status,
-            )
-        return await resp.text()
+            ) from exc
 
-    async def _read_response_bytes(
-        self, resp: ClientResponse, path: str
-    ) -> bytes:
-        if resp.status in (401, 403):
-            # For binary endpoints (camera image), retry once with auth.
-            www_auth = resp.headers.get("WWW-Authenticate", "")
-            challenge = _parse_digest_challenge(www_auth)
-            if challenge is None:
+        url = str(resp.url)
+        www_auth = resp.headers.get("WWW-Authenticate", "").strip()
+        challenge = _parse_digest_challenge(www_auth) if www_auth else None
+
+        if challenge is not None:
+            # Path 1: server sent a Digest challenge on the first hit.
+            return await self._retry_with_digest(
+                url, method, path, body, content_type, challenge,
+            )
+
+        # Path 2: server sent nothing Digest-shaped (Basic, empty,
+        # missing). Try Basic auth as a fallback.
+        basic_header = _build_basic_header(self._username, self._password)
+        retry_headers: dict[str, str] = {"Authorization": basic_header}
+        if content_type:
+            retry_headers["Content-Type"] = content_type
+        try:
+            async with self._session.request(
+                method, url, data=body, headers=retry_headers,
+            ) as retry_resp:
+                if retry_resp.status in (200, 201, 204):
+                    return await retry_resp.text()
+                # Basic failed. Some devices advertise Digest on the
+                # second hit after Basic fails. Try one Digest retry
+                # (issue a NEW request with Digest, don't recurse on
+                # retry_resp).
+                retry_www_auth = retry_resp.headers.get(
+                    "WWW-Authenticate", ""
+                ).strip()
+                retry_challenge = (
+                    _parse_digest_challenge(retry_www_auth)
+                    if retry_www_auth else None
+                )
+                if retry_challenge is not None:
+                    return await self._retry_with_digest(
+                        url, method, path, body, content_type, retry_challenge,
+                    )
+                # Both Basic and Digest paths failed. Give up cleanly
+                # with the original 401/403 status — no recursion.
                 raise ISAPIAuthError(
                     f"HTTP {resp.status} on {resp.url}: "
                     f"unrecognized WWW-Authenticate: {www_auth[:120]}",
                     status_code=resp.status,
                 )
-            auth_header = _build_digest_header(
-                self._username, self._password, "GET", path, challenge
+        except ISAPIAuthError:
+            raise
+        except (ClientError, asyncio.TimeoutError) as exc:
+            raise ISAPIConnectionError(str(exc)) from exc
+
+    async def _retry_with_digest(
+        self,
+        url: str,
+        method: str,
+        path: str,
+        body: str | None,
+        content_type: str | None,
+        challenge: dict[str, str],
+    ) -> str:
+        """Issue one Digest-auth retry and return the body or raise.
+
+        v0.6.8: linear, not recursive. If the Digest retry itself
+        returns 401, we surface it as ISAPIAuthError rather than
+        recursing — that was the v0.6.7 infinite-loop bug.
+        """
+        try:
+            digest_header = _build_digest_header(
+                self._username, self._password, method, path, challenge,
             )
-            url = str(resp.url)
+        except UnicodeEncodeError as exc:
+            raise ISAPIAuthError(
+                f"HTTP 401 on {url}: Digest computation failed "
+                f"(password contains non-UTF-8 bytes at position "
+                f"{exc.start}-{exc.end})",
+                status_code=401,
+            ) from exc
+
+        retry_headers: dict[str, str] = {"Authorization": digest_header}
+        if content_type:
+            retry_headers["Content-Type"] = content_type
+
+        try:
+            async with self._session.request(
+                method, url, data=body, headers=retry_headers,
+            ) as resp:
+                if resp.status in (200, 201, 204):
+                    return await resp.text()
+                if resp.status in (401, 403):
+                    # Server still wants auth. Surface immediately —
+                    # do NOT recurse.
+                    raise ISAPIAuthError(
+                        f"HTTP {resp.status} on {resp.url}: Digest "
+                        f"auth rejected (wrong username/password, or "
+                        f"server misconfigured)",
+                        status_code=resp.status,
+                    )
+                if resp.status >= 400:
+                    body_text = await resp.text()
+                    raise ISAPIError(
+                        f"HTTP {resp.status} on {resp.url}: "
+                        f"{body_text[:200]}",
+                        status_code=resp.status,
+                    )
+                return await resp.text()
+        except ISAPIAuthError:
+            raise
+        except (ClientError, asyncio.TimeoutError) as exc:
+            raise ISAPIConnectionError(str(exc)) from exc
+
+    async def _read_response_bytes(
+        self, resp: ClientResponse, path: str
+    ) -> bytes:
+        # v0.6.8: same v0.6.7 Basic-fallback + linear-flow fixes as
+        # _read_response_text, but for binary endpoints (camera image).
+        if resp.status not in (401, 403):
+            if resp.status >= 400:
+                body = await resp.text()
+                raise ISAPIError(
+                    f"HTTP {resp.status} on {resp.url}: {body[:200]}",
+                    status_code=resp.status,
+                )
+            return await resp.read()
+
+        # Pre-validate UTF-8 safety before any digest computation.
+        try:
+            self._username.encode("utf-8")
+            self._password.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ISAPIAuthError(
+                f"Credentials contain invalid UTF-8 bytes: "
+                f"{exc.reason}",
+                status_code=resp.status,
+            ) from exc
+
+        url = str(resp.url)
+        www_auth = resp.headers.get("WWW-Authenticate", "").strip()
+        challenge = _parse_digest_challenge(www_auth) if www_auth else None
+
+        if challenge is None:
+            # Try Basic auth fallback (same pattern as text path).
+            basic_header = _build_basic_header(self._username, self._password)
             try:
                 async with self._session.get(
-                    url, headers={"Authorization": auth_header}
+                    url, headers={"Authorization": basic_header}
                 ) as retry_resp:
+                    if retry_resp.status in (200, 201, 204):
+                        return await retry_resp.read()
                     if retry_resp.status in (401, 403):
                         raise ISAPIAuthError(
-                            f"HTTP {retry_resp.status} on {retry_resp.url} after auth",
+                            f"HTTP {retry_resp.status} on "
+                            f"{retry_resp.url} after Basic auth",
                             status_code=retry_resp.status,
                         )
                     if retry_resp.status >= 400:
                         body = await retry_resp.text()
                         raise ISAPIError(
-                            f"HTTP {retry_resp.status} on {retry_resp.url}: {body[:200]}",
+                            f"HTTP {retry_resp.status} on "
+                            f"{retry_resp.url}: {body[:200]}",
                             status_code=retry_resp.status,
                         )
                     return await retry_resp.read()
@@ -436,10 +495,40 @@ class ISAPIClient:
                 raise
             except (ClientError, asyncio.TimeoutError) as exc:
                 raise ISAPIConnectionError(str(exc)) from exc
-        if resp.status >= 400:
-            body = await resp.text()
-            raise ISAPIError(
-                f"HTTP {resp.status} on {resp.url}: {body[:200]}",
-                status_code=resp.status,
+
+        # Digest retry.
+        try:
+            auth_header = _build_digest_header(
+                self._username, self._password, "GET", path, challenge
             )
-        return await resp.read()
+        except UnicodeEncodeError as exc:
+            raise ISAPIAuthError(
+                f"Digest computation failed for {url}: "
+                f"invalid UTF-8 in credentials at position "
+                f"{exc.start}-{exc.end}",
+                status_code=401,
+            ) from exc
+
+        try:
+            async with self._session.get(
+                url, headers={"Authorization": auth_header}
+            ) as retry_resp:
+                if retry_resp.status in (401, 403):
+                    # No recursion — surface immediately.
+                    raise ISAPIAuthError(
+                        f"HTTP {retry_resp.status} on "
+                        f"{retry_resp.url} after Digest auth",
+                        status_code=retry_resp.status,
+                    )
+                if retry_resp.status >= 400:
+                    body = await retry_resp.text()
+                    raise ISAPIError(
+                        f"HTTP {retry_resp.status} on "
+                        f"{retry_resp.url}: {body[:200]}",
+                        status_code=retry_resp.status,
+                    )
+                return await retry_resp.read()
+        except ISAPIAuthError:
+            raise
+        except (ClientError, asyncio.TimeoutError) as exc:
+            raise ISAPIConnectionError(str(exc)) from exc

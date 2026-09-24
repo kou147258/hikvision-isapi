@@ -106,5 +106,13 @@ async def async_register_ptz_service(hass: HomeAssistant, entry: ConfigEntry) ->
 
 
 async def async_unregister_ptz_service(hass: HomeAssistant) -> None:
-    """Unregister the ptz_goto_preset service."""
+    """Unregister the ptz_goto_preset service.
+
+    v0.6.8: skip if the service wasn't registered (e.g. device has no
+    PTZ capability, or was never set up). Pre-v0.6.8 HA logged
+    "Unable to remove unknown service hikvision_isapi_performance/ptz_goto_preset"
+    on every reload of an entry whose device had no PTZ.
+    """
+    if not hass.services.has_service(DOMAIN, "ptz_goto_preset"):
+        return
     hass.services.async_remove(DOMAIN, "ptz_goto_preset")
