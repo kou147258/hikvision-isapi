@@ -188,3 +188,28 @@ selector.NumberSelector = lambda *a, **k: None
 selector.NumberSelectorConfig = lambda **k: None
 selector.NumberSelectorMode = types.SimpleNamespace(BOX="box")
 sys.modules["homeassistant.helpers.selector"] = selector
+
+
+# ---- v0.6.12: pytest-asyncio fixture ----
+# The httpx-based ISAPIClient tests need an event loop. Configure
+# auto mode so we can write ``async def test_...`` without explicit
+# ``@pytest.mark.asyncio`` decoration on each test.
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-mark async tests with asyncio mode."""
+    for item in items:
+        if isinstance(item, pytest.Function):
+            if item.get_closest_marker("asyncio") is None:
+                if hasattr(item, "obj") and hasattr(item.obj, "__code__"):
+                    if item.obj.__code__.co_flags & 0x100:  # CO_COROUTINE
+                        item.add_marker(pytest.mark.asyncio)
+
+
+@pytest.fixture
+def event_loop_policy():
+    """Default policy; tests share the loop pytest-asyncio manages."""
+    import asyncio as _asyncio
+    return _asyncio.DefaultEventLoopPolicy()

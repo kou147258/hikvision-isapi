@@ -1,13 +1,15 @@
 {
   "domain": "hikvision_isapi_performance",
   "name": "Hikvision ISAPI Performance",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "documentation": "https://github.com/kou147258/hikvision-isapi-performance",
   "issue_tracker": "https://github.com/kou147258/hikvision-isapi-performance/issues",
   "codeowners": ["@kou147258"],
   "config_flow": true,
   "iot_class": "local_polling",
   "integration_type": "device",
-  "loggers": ["aiohttp_access"],
-  "requirements": ["aiohttp>=3.9.0,<4.0.0"]
+  "loggers": ["httpx"],
+  "requirements": [
+    "httpx>=0.27.0,<1.0.0"
+  ]
 }

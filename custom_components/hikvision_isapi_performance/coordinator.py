@@ -70,6 +70,17 @@ from .isapi_client import ISAPIAuthError, ISAPIConnectionError, ISAPIClient, ISA
 _LOGGER = logging.getLogger(__name__)
 
 
+def entry_id_hint(coordinator: "HikvisionISAPICoordinator") -> str:
+    """Short human-readable label for log lines.
+
+    We deliberately don't include credentials or full entry IDs in
+    INFO logs (they'd leak into HA's persistent log file). The
+    entry ID prefix is enough to disambiguate N devices on the same
+    HA host.
+    """
+    return f"entry_id={getattr(coordinator, 'entry_id', '?')[:8]}"
+
+
 def _xml_text(element: ET.Element | None, *path: str) -> str | None:
     """Return the text of an XML element at ``path`` (relative)."""
     if element is None:
@@ -579,6 +590,18 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         type (``/Streaming/channels/{id}/status`` for IPC,
         ``/ContentMgmt/InputProxy/channels/{id}/status`` for NVR/DVR).
         """
+        # v0.6.12: log a single INFO line at the top of each refresh
+        # so the user can confirm the device is being polled at all,
+        # and which scheme/port we're trying. Pre-v0.6.12 all our
+        # diagnostic logs were at DEBUG (off by default in HA),
+        # making it look like "the integration isn't doing anything"
+        # when actually the device was unreachable / returning 401.
+        scheme = "https" if self._use_https else "http"
+        _LOGGER.info(
+            "Polling %s://%s:%d (%s)",
+            scheme, self._host, self._port, entry_id_hint(self),
+        )
+
         try:
             async with self._make_client() as client:
                 # Fetch deviceInfo first so we know which channel-list
@@ -589,6 +612,21 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                 device_info = _parse_device_info(device_info_xml)
                 device_type = normalize_device_type(
                     device_info.get("deviceType", "")
+                )
+                # v0.6.12: log detected deviceType at INFO so the user
+                # can see which routing path we took. Pre-v0.6.12 this
+                # was DEBUG-only and the user thought "device type
+                # routing isn't working".
+                _LOGGER.info(
+                    "Detected %s at %s as deviceType=%r (routing channels "
+                    "endpoint to %s, per-channel status to %s)",
+                    device_info.get("model", "?"),
+                    self._host,
+                    device_info.get("deviceType", ""),
+                    ("/Streaming/channels" if device_type == DEVICE_TYPE_IPCAMERA
+                     else "/ContentMgmt/InputProxy/channels"),
+                    ("/Streaming/channels/{id}/status" if device_type == DEVICE_TYPE_IPCAMERA
+                     else "/ContentMgmt/InputProxy/channels/{id}/status"),
                 )
 
                 # Pick the right channel-list endpoint(s) for this
@@ -733,12 +771,18 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
             if not ch_id:
                 continue
             status_xml = None
+            # v0.6.12: the except tuple now includes ISAPIConnectionError
+            # so a transient network blip on a single per-channel fetch
+            # doesn't propagate out of _async_update_data and force
+            # the entire device's entities into unavailable state.
             try:
                 async with self._make_client() as client:
                     status_xml = await client.get_xml(
                         per_ch_status_fmt.format(id=ch_id)
                     )
-            except (ISAPIError, ISAPIAuthError) as exc:
+            except (
+                ISAPIError, ISAPIAuthError, ISAPIConnectionError,
+            ) as exc:
                 # Try the alt status endpoint in case device type
                 # detection was wrong (e.g. deviceType is unknown and
                 # defaulted to ipcamera but it's actually an NVR).
@@ -748,7 +792,9 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                             status_xml = await client.get_xml(
                                 alt_status_fmt.format(id=ch_id)
                             )
-                    except (ISAPIError, ISAPIAuthError) as exc2:
+                    except (
+                        ISAPIError, ISAPIAuthError, ISAPIConnectionError,
+                    ) as exc2:
                         _LOGGER.debug(
                             "Per-channel status unavailable for "
                             "%s ch %s: %s / %s",
@@ -764,14 +810,19 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                 continue
             try:
                 ch_status = _parse_channel_status_extended(status_xml)
-                # Only override fields that the per-channel endpoint
-                # actually reported (non-default). This way, the
-                # channel-list's online/recording values stay when the
-                # per-channel endpoint is unavailable.
-                ch["online"] = ch_status["online"] or ch.get("online", False)
-                ch["recording"] = (
-                    ch_status["recording"] or ch.get("recording", False)
-                )
+                # v0.6.12: per-channel status takes priority over the
+                # channel-list values. Pre-v0.6.12 we used ``ch_status
+                # or ch`` which put False from the per-channel endpoint
+                # *behind* the channel-list value (a ``True`` in the
+                # channel list would dominate a fresh ``False`` from
+                # the per-channel endpoint). The current intent is the
+                # reverse: if the per-channel endpoint reported
+                # online=False, trust it. Only fall back to the
+                # channel-list when the per-channel data wasn't
+                # returned at all (already handled by the early
+                # ``continue`` above).
+                ch["online"] = ch_status["online"]
+                ch["recording"] = ch_status["recording"]
                 ch["motion_detected"] = ch_status["motion_detected"]
                 # v0.5.0 — extended IPC health fields. The endpoint
                 # reports the device uptime (not the channel's); useful
