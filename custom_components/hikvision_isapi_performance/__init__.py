@@ -15,6 +15,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
     CONF_HOST,
     DEFAULT_PORT,
@@ -45,6 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
         verify_ssl=entry.data.get(CONF_VERIFY_SSL, False),
+        use_https=entry.data.get(CONF_USE_HTTPS, True),
         scan_interval=entry.options.get(
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         ),

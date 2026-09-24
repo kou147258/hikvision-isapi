@@ -27,6 +27,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
@@ -45,6 +46,20 @@ from .isapi_client import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _default_use_https(port: int) -> bool:
+    """Pick a sane HTTP/HTTPS default based on port.
+
+    443 → HTTPS, anything else → HTTP. The user can override per
+    device because some Hikvision firmware serves ISAPI over HTTP
+    on port 443 (a config quirk), and others serve over HTTPS on
+    non-standard ports.
+    """
+    return port == 443
+
+
+# Voluptuous schemas can't reference runtime-computed defaults, so
+# the port-derived default is applied in async_step_user instead.
 USER_SCHEMA = vol.Schema(
     {
         vol.Required("host"): str,
@@ -53,6 +68,7 @@ USER_SCHEMA = vol.Schema(
         ),
         vol.Required(CONF_USERNAME, default="admin"): str,
         vol.Required(CONF_PASSWORD): str,
+        vol.Optional(CONF_USE_HTTPS): BooleanSelector(),
         vol.Optional(CONF_VERIFY_SSL, default=False): BooleanSelector(),
     }
 )
@@ -74,6 +90,13 @@ class HikvisionISAPIConfigFlow(ConfigFlow, domain=DOMAIN):
             port = user_input.get(CONF_PORT, DEFAULT_PORT)
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
+            # v0.6.10: explicit HTTP/HTTPS selection. Default to the
+            # port-based guess; user can override. Some Hikvision
+            # firmware serves ISAPI over HTTP on port 443 (config
+            # quirk) — port-based inference alone gets those wrong.
+            use_https = user_input.get(
+                CONF_USE_HTTPS, _default_use_https(port)
+            )
             verify_ssl = user_input.get(CONF_VERIFY_SSL, False)
 
             await self.async_set_unique_id(f"{host}:{port}")
@@ -86,6 +109,7 @@ class HikvisionISAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     username=username,
                     password=password,
                     verify_ssl=verify_ssl,
+                    use_https=use_https,
                     timeout=DEFAULT_REQUEST_TIMEOUT,
                 ) as client:
                     await client.get_text(ISAPI_SYSTEM_DEVICE_INFO)
@@ -109,6 +133,7 @@ class HikvisionISAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_PORT: port,
                         CONF_USERNAME: username,
                         CONF_PASSWORD: password,
+                        CONF_USE_HTTPS: use_https,
                         CONF_VERIFY_SSL: verify_ssl,
                     },
                 )

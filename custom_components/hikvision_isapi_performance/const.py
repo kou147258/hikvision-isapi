@@ -26,6 +26,11 @@ CONF_PORT: Final = "port"
 CONF_USERNAME: Final = "username"
 CONF_PASSWORD: Final = "password"
 CONF_VERIFY_SSL: Final = "verify_ssl"
+# v0.6.10: explicit HTTP/HTTPS selector. Pre-v0.6.10 we guessed based
+# on port (443 → https, anything else → http), but some Hikvision
+# firmware serves ISAPI over HTTP on port 443 and others serve over
+# HTTPS on a non-standard port. Let the user pick explicitly.
+CONF_USE_HTTPS: Final = "use_https"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 
 # ---- ISAPI paths ----

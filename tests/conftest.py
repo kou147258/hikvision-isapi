@@ -59,9 +59,24 @@ _install_stub("homeassistant.core", {
 })
 
 # Config entries
+class _StubConfigFlow:
+    """Stub base class for ConfigFlow subclasses.
+
+    Real HA ConfigFlow.__init_subclass__ accepts a `domain=` keyword
+    argument. Our stub needs to accept arbitrary kwargs without
+    forwarding them to object.__init_subclass__.
+    """
+
+    def __init_subclass__(cls, **kwargs):
+        # Silently accept and discard kwargs (domain=, etc.) so
+        # `class HikvisionISAPIConfigFlow(ConfigFlow, domain=DOMAIN):`
+        # works in unit tests without a real HA install.
+        pass
+
+
 _install_stub("homeassistant.config_entries", {
     "ConfigEntry": object,
-    "ConfigFlow": type("ConfigFlow", (), {}),
+    "ConfigFlow": _StubConfigFlow,
     "ConfigFlowResult": dict,
     "OptionsFlow": type("OptionsFlow", (), {}),
 })

@@ -81,6 +81,7 @@ async def async_register_ptz_service(hass: HomeAssistant, entry: ConfigEntry) ->
                 username=coordinator._username,
                 password=coordinator._password,
                 verify_ssl=coordinator._verify_ssl,
+                use_https=coordinator._use_https,
                 timeout=10,
             ) as client:
                 await client.put_text(path, "")

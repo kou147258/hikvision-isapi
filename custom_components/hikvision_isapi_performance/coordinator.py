@@ -507,6 +507,7 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         username: str,
         password: str,
         verify_ssl: bool,
+        use_https: bool,
         scan_interval: int,
     ) -> None:
         super().__init__(
@@ -520,6 +521,7 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         self._username = username
         self._password = password
         self._verify_ssl = verify_ssl
+        self._use_https = use_https
         self.device_info: dict[str, str] = {}
         self.system_status: dict[str, str] = {}
         self.channels: list[dict[str, Any]] = []
@@ -539,6 +541,7 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
             username=self._username,
             password=self._password,
             verify_ssl=self._verify_ssl,
+            use_https=self._use_https,
             timeout=DEFAULT_REQUEST_TIMEOUT,
         )
 
