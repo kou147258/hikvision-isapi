@@ -43,23 +43,19 @@ from xml.etree import ElementTree as ET
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
 
 from .const import (
-    DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
     DEVICE_TYPE_DVR,
     DEVICE_TYPE_IPCAMERA,
     DEVICE_TYPE_NETWORK_VIDEO_RECORDER,
     DOMAIN,
-    ISAPI_CONTENT_MGMT_HDD,
     ISAPI_CONTENT_MGMT_STORAGE,
-    ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS,
     ISAPI_INPUT_PROXY_CHANNELS,
     ISAPI_INPUT_PROXY_CHANNELS_STATUS,
     ISAPI_STREAMING_CHANNELS,
@@ -479,10 +475,6 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         self._username = username
         self._password = password
         self._verify_ssl = verify_ssl
-        # Reuse HA's shared aiohttp session for connection pooling, etc.
-        # We still need to use our own ISAPIClient for the DigestAuth and
-        # TLS bypass logic, but we can plug HA's session in later.
-        self._ha_session = async_get_clientsession(hass)
         self.device_info: dict[str, str] = {}
         self.system_status: dict[str, str] = {}
         self.channels: list[dict[str, Any]] = []

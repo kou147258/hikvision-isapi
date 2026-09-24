@@ -17,10 +17,10 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ISAPI_INPUT_PROXY_CHANNELS
 from .coordinator import HikvisionISAPICoordinator
+from .entity import HikvisionISAPIEntity
 from .isapi_client import (
     ISAPIConnectionError,
     ISAPIClient,
@@ -64,13 +64,10 @@ async def async_setup_entry(
         coordinator.async_add_listener(_on_update)
 
 
-class HikvisionISAPIRecordingSwitch(
-    CoordinatorEntity[HikvisionISAPICoordinator], SwitchEntity
-):
+class HikvisionISAPIRecordingSwitch(HikvisionISAPIEntity, SwitchEntity):
     """A switch that toggles recording on/off for one channel."""
 
     _attr_translation_key = "recording"
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -78,12 +75,10 @@ class HikvisionISAPIRecordingSwitch(
         entry: ConfigEntry,
         channel: dict[str, Any],
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._channel = channel
         self._attr_unique_id = f"{entry.entry_id}_record_{channel['id']}"
         self._attr_name = channel.get("name") or f"Channel {channel['id']}"
-        self._attr_device_info = None
 
     @property
     def channel_id(self) -> str:

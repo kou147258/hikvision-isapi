@@ -67,10 +67,6 @@ ISAPI_SYSTEM_STORAGE_HARDDISKS: Final = (
     "/ISAPI/System/Storage/hardDisks"
 )
 
-# Storage (NVR / DVR)
-ISAPI_CONTENT_MGMT_STORAGE: Final = "/ISAPI/ContentMgmt/storage"
-ISAPI_CONTENT_MGMT_HDD: Final = "/ISAPI/ContentMgmt/hdd"
-
 # Event streaming
 ISAPI_EVENT_ALERT_STREAM: Final = (
     "/ISAPI/Event/notification/alertStream"
@@ -78,12 +74,6 @@ ISAPI_EVENT_ALERT_STREAM: Final = (
 
 # PTZ
 ISAPI_PTZ_CTRL_CHANNELS: Final = "/ISAPI/PTZCtrl/channels"
-
-# ---- Capability flags returned by deviceInfo ----
-# We use these to decide which platforms to register per device.
-CAP_PTZ: Final = "PTZ"
-CAP_VIDEO_INPUT: Final = "videoInput"
-CAP_INGRESS_ALARM: Final = "ingressAlarm"
 
 # ---- Device type strings returned by deviceInfo.deviceType ----
 # Used to route snapshot / recording endpoints to the right path

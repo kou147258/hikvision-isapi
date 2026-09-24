@@ -16,10 +16,10 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ISAPI_SYSTEM_REBOOT
 from .coordinator import HikvisionISAPICoordinator
+from .entity import HikvisionISAPIEntity
 from .isapi_client import (
     ISAPIConnectionError,
     ISAPIClient,
@@ -39,24 +39,19 @@ async def async_setup_entry(
     async_add_entities([HikvisionISAPIRebootButton(coordinator, entry)])
 
 
-class HikvisionISAPIRebootButton(
-    CoordinatorEntity[HikvisionISAPICoordinator], ButtonEntity
-):
+class HikvisionISAPIRebootButton(HikvisionISAPIEntity, ButtonEntity):
     """A button that reboots the device via ``PUT /ISAPI/System/reboot``."""
 
     _attr_translation_key = "reboot"
-    _attr_has_entity_name = True
 
     def __init__(
         self,
         coordinator: HikvisionISAPICoordinator,
         entry: ConfigEntry,
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_reboot"
         self._attr_name = "重启设备"
-        self._attr_device_info = None
 
     async def async_press(self) -> None:
         coordinator = self.coordinator

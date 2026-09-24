@@ -33,7 +33,6 @@ from homeassistant.components.camera import Camera
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DEVICE_TYPE_NETWORK_VIDEO_RECORDER,
@@ -42,6 +41,7 @@ from .const import (
     ISAPI_STREAMING_CHANNELS,
 )
 from .coordinator import HikvisionISAPICoordinator
+from .entity import HikvisionISAPIEntity
 from .isapi_client import ISAPIConnectionError, ISAPIClient, ISAPIError
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,11 +97,10 @@ def _make_camera_listener(
     return _on_update
 
 
-class HikvisionISAPICamera(CoordinatorEntity[HikvisionISAPICoordinator], Camera):
+class HikvisionISAPICamera(HikvisionISAPIEntity, Camera):
     """A still-image camera entity backed by Hikvision's /picture endpoint."""
 
     _attr_translation_key = "camera"
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -109,15 +108,13 @@ class HikvisionISAPICamera(CoordinatorEntity[HikvisionISAPICoordinator], Camera)
         entry: ConfigEntry,
         channel: dict[str, Any],
     ) -> None:
-        CoordinatorEntity.__init__(self, coordinator)
+        HikvisionISAPIEntity.__init__(self, coordinator, entry)
         Camera.__init__(self)
-        self._entry = entry
         self._channel = channel
         self._attr_unique_id = f"{entry.entry_id}_camera_{channel['id']}"
         self._attr_translation_key = "camera"
         # Use channel name (e.g. "Camera 1") as the entity name suffix.
         self._attr_name = channel.get("name") or f"Channel {channel['id']}"
-        self._attr_device_info = coordinator.device_info if hasattr(coordinator, "device_info") else None
 
     @property
     def channel_id(self) -> str:
@@ -147,10 +144,11 @@ class HikvisionISAPICamera(CoordinatorEntity[HikvisionISAPICoordinator], Camera)
         device_type = coordinator.data.device_type
         if device_type == DEVICE_TYPE_NETWORK_VIDEO_RECORDER:
             # NVR — use the proxy endpoint to grab a snapshot of a
-            # mounted IPC channel.
-            path = (
-                f"{ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS_PICTURE}"
-                f".format(id={self.channel_id})"
+            # mounted IPC channel. The constant contains a Python
+            # ``{id}`` placeholder; format() resolves it to the
+            # channel id at request time.
+            path = ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS_PICTURE.format(
+                id=self.channel_id
             )
         else:
             # IPC / DVR — direct local endpoint.
@@ -172,7 +170,7 @@ class HikvisionISAPICamera(CoordinatorEntity[HikvisionISAPICoordinator], Camera)
                 username=coordinator._username,
                 password=coordinator._password,
                 verify_ssl=coordinator._verify_ssl,
-                timeout=coordinator._timeout if hasattr(coordinator, "_timeout") else 10,
+                timeout=10,
             ) as client:
                 return await client.get_bytes(path)
         except (ISAPIConnectionError, ISAPIError) as exc:

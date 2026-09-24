@@ -25,10 +25,10 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import HikvisionISAPICoordinator, HikvisionISAPIData
+from .entity import HikvisionISAPIEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -365,10 +365,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class HikvisionISAPISensor(CoordinatorEntity[HikvisionISAPICoordinator], SensorEntity):
+class HikvisionISAPISensor(HikvisionISAPIEntity, SensorEntity):
     """Static ISAPI sensor entity."""
 
-    _attr_has_entity_name = True
     entity_description: HikvisionISAPISensorDescription
 
     def __init__(
@@ -377,10 +376,9 @@ class HikvisionISAPISensor(CoordinatorEntity[HikvisionISAPICoordinator], SensorE
         entry: ConfigEntry,
         description: HikvisionISAPISensorDescription,
     ) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = None  # filled by async_added_to_hass
 
     @property
     def native_value(self) -> Any:

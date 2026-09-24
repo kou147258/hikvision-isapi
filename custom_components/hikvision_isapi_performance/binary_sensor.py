@@ -28,10 +28,10 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import HikvisionISAPICoordinator, HikvisionISAPIData
+from .coordinator import HikvisionISAPICoordinator
+from .entity import HikvisionISAPIEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def _entities_for_channel(
 
 
 class HikvisionISAPIChannelOnlineBinarySensor(
-    CoordinatorEntity[HikvisionISAPICoordinator], BinarySensorEntity
+    HikvisionISAPIEntity, BinarySensorEntity
 ):
     """Per-channel online / reachability binary sensor."""
 
@@ -115,8 +115,7 @@ class HikvisionISAPIChannelOnlineBinarySensor(
         channel_id: str,
         channel_name: str,
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._channel_id = channel_id
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_channel_{channel_id}_online"
@@ -133,7 +132,7 @@ class HikvisionISAPIChannelOnlineBinarySensor(
 
 
 class HikvisionISAPIChannelRecordingBinarySensor(
-    CoordinatorEntity[HikvisionISAPICoordinator], BinarySensorEntity
+    HikvisionISAPIEntity, BinarySensorEntity
 ):
     """Per-channel recording state binary sensor."""
 
@@ -147,8 +146,7 @@ class HikvisionISAPIChannelRecordingBinarySensor(
         channel_id: str,
         channel_name: str,
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._channel_id = channel_id
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_channel_{channel_id}_recording"
@@ -165,7 +163,7 @@ class HikvisionISAPIChannelRecordingBinarySensor(
 
 
 class HikvisionISAPIChannelMotionBinarySensor(
-    CoordinatorEntity[HikvisionISAPICoordinator], BinarySensorEntity
+    HikvisionISAPIEntity, BinarySensorEntity
 ):
     """Per-channel motion-detection binary sensor.
 
@@ -185,8 +183,7 @@ class HikvisionISAPIChannelMotionBinarySensor(
         channel_id: str,
         channel_name: str,
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry)
         self._channel_id = channel_id
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_channel_{channel_id}_motion"

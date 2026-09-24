@@ -106,13 +106,27 @@ _install_stub("homeassistant.exceptions", {
 })
 
 # Helpers — update coordinator
+async def _stub_async_added_to_hass(self):
+    """Default async_added_to_hass for stub CoordinatorEntity."""
+    return None
+
+
 _install_stub("homeassistant.helpers.update_coordinator", {
     "DataUpdateCoordinator": type(
         "DataUpdateCoordinator",
         (),
         {"__class_getitem__": classmethod(lambda cls, _x: cls)},
     ),
-    "CoordinatorEntity": type("CoordinatorEntity", (), {}),
+    "CoordinatorEntity": type(
+        "CoordinatorEntity",
+        (),
+        {
+            "__class_getitem__": classmethod(lambda cls, _x: cls),
+            "__init__": lambda self, coordinator: setattr(self, "coordinator", coordinator),
+            "async_added_to_hass": _stub_async_added_to_hass,
+            "_handle_coordinator_update": lambda self: None,
+        },
+    ),
     "UpdateFailed": type("UpdateFailed", (Exception,), {}),
 })
 
@@ -131,6 +145,10 @@ _install_stub("homeassistant.helpers.device_registry", {
     "async_get": lambda hass: types.SimpleNamespace(
         async_get=lambda device_id: None,
     ),
+    # DeviceInfo is a TypedDict in real HA. The integration only reads
+    # fields from the dict it builds, so a plain dict class is enough
+    # for our unit tests.
+    "DeviceInfo": dict,
 })
 
 # Helpers — config validation

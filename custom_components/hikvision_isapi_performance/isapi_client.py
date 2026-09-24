@@ -169,6 +169,7 @@ class ISAPIClient:
         *,
         port: int = 443,
         verify_ssl: bool = False,
+        use_https: bool = True,
         timeout: float = 10.0,
     ) -> None:
         self._host = host
@@ -176,12 +177,14 @@ class ISAPIClient:
         self._username = username
         self._password = password
         self._verify_ssl = verify_ssl
+        self._use_https = use_https
         self._timeout = timeout
         self._session: ClientSession | None = None
         # The DigestAuth machinery needs the same nonce reuse counter
         # for repeated requests. Hikvision typically issues a new
         # nonce per 401 challenge, so we just track that and re-handshake.
-        self._base_url = f"http{'s' if port == 443 else 'http'}://{host}:{port}"
+        scheme = "https" if use_https else "http"
+        self._base_url = f"{scheme}://{host}:{port}"
 
     async def __aenter__(self) -> "ISAPIClient":
         ssl = None if self._verify_ssl else False

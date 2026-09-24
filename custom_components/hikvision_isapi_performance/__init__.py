@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_VERIFY_SSL,
+    CONF_HOST,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -39,34 +40,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = HikvisionISAPICoordinator(
         hass,
         entry,
-        host=entry.data["host"],
+        host=entry.data[CONF_HOST],
         port=entry.data.get(CONF_PORT, DEFAULT_PORT),
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
         verify_ssl=entry.data.get(CONF_VERIFY_SSL, False),
         scan_interval=entry.options.get(
-            CONF_SCAN_INTERVAL,
-            entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         ),
     )
 
-    # v0.1.23 pattern (carried over from hikvision_snmp): do NOT block
-    # entry setup on the first refresh. Register entities immediately
-    # and let the coordinator's normal poll cycle populate data. The
-    # first refresh runs as a background task.
-    await coordinator.async_config_entry_first_refresh()
-
+    # v0.6.2 — do NOT block entry setup on the first refresh. The
+    # config flow's credential check already proved the device is
+    # reachable; the coordinator's first poll is best-effort and
+    # runs in the background. Blocking here triggers HA's
+    # "Setup taking over 10 seconds" warning on slow NVRs.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register the PTZ service if the device supports it.
+    # Kick off the first refresh in the background. Platforms already
+    # have access to the coordinator; they'll pick up data on the
+    # next listener fire.
+    hass.async_create_task(
+        coordinator.async_config_entry_first_refresh(),
+        name="hikvision_isapi_performance.first_refresh",
+    )
+
+    # Register the PTZ service if the device supports it. Capabilities
+    # are populated by the first refresh — but we may not have them yet.
+    # If we don't, defer to a one-shot listener that fires as soon as
+    # capabilities land.
     if coordinator.capabilities.get("ptz"):
         await async_register_ptz_service(hass, entry)
         _LOGGER.debug(
             "PTZ capability detected for %s — ptz_goto_preset service registered",
-            entry.data["host"],
+            entry.data[CONF_HOST],
         )
+    else:
+        def _on_update_maybe_register_ptz() -> None:
+            if not coordinator.capabilities.get("ptz"):
+                return
+            hass.async_create_task(
+                async_register_ptz_service(hass, entry),
+                name="hikvision_isapi_performance.ptz_register",
+            )
+
+        coordinator.async_add_listener(_on_update_maybe_register_ptz)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
