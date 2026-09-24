@@ -46,6 +46,11 @@ ISAPI_INPUT_PROXY_CHANNELS_STATUS: Final = (
     "/ISAPI/ContentMgmt/InputProxy/channels/{id}/status"
 )
 ISAPI_STREAMING_CHANNELS: Final = "/ISAPI/Streaming/channels"
+# Per-channel status for IPCs (streaming-side). NVRs use the
+# ContentMgmt/InputProxy variant instead.
+ISAPI_STREAMING_CHANNELS_STATUS: Final = (
+    "/ISAPI/Streaming/channels/{id}/status"
+)
 # NVR-side: proxy endpoint to grab a snapshot of a mounted IPC
 # channel. IPC's own /Streaming/channels/{id}/picture returns
 # HTTP 400 on NVRs (verified against DS-7708-I4 / DS-8632-I8 in

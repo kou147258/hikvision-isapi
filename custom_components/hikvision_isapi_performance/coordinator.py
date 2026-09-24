@@ -59,6 +59,7 @@ from .const import (
     ISAPI_INPUT_PROXY_CHANNELS,
     ISAPI_INPUT_PROXY_CHANNELS_STATUS,
     ISAPI_STREAMING_CHANNELS,
+    ISAPI_STREAMING_CHANNELS_STATUS,
     ISAPI_SYSTEM_DEVICE_INFO,
     ISAPI_SYSTEM_NETWORK_INTERFACES,
     ISAPI_SYSTEM_STATUS,
@@ -200,6 +201,50 @@ def _parse_channels(root: ET.Element | None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for ch in root.findall(".//InputProxyChannel"):
         ch_id = _xml_text(ch, "id") or ""
+        if not ch_id:
+            continue
+        out.append(
+            {
+                "id": ch_id,
+                "name": _xml_text(ch, "name") or f"Channel {ch_id}",
+                "online": (_xml_text(ch, "online") or "").lower() == "true",
+                "recording": (_xml_text(ch, "recordStatus") or "").lower()
+                == "recording",
+            }
+        )
+    return out
+
+
+def _parse_streaming_channels_list(
+    root: ET.Element | None,
+) -> list[dict[str, Any]]:
+    """Parse ``/ISAPI/Streaming/channels`` response (IPC-side).
+
+    Hikvision's response shape is::
+
+        <StreamingChannelList>
+          <StreamingChannel>
+            <id>1</id>
+            <videoInputChannelID>1</videoInputChannelID>
+            <name>Camera 1</name>            (optional)
+            <online>true</online>           (optional)
+            ...
+          </StreamingChannel>
+        </StreamingChannelList>
+
+    Unlike the InputProxy list, this response shape doesn't always
+    include ``recordStatus`` or ``online`` — those come from the
+    per-channel status endpoint instead.
+    """
+    if root is None:
+        return []
+    out: list[dict[str, Any]] = []
+    for ch in root.findall(".//StreamingChannel"):
+        ch_id = (
+            _xml_text(ch, "id")
+            or _xml_text(ch, "videoInputChannelID")
+            or ""
+        )
         if not ch_id:
             continue
         out.append(
@@ -498,35 +543,86 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
         )
 
     async def _async_update_data(self) -> HikvisionISAPIData:
-        """One coordinator refresh: GET deviceInfo / status / channels / storage / network."""
+        """One coordinator refresh: GET deviceInfo / status / channels / storage / network.
+
+        v0.6.9: device-type-aware endpoint selection. The user has
+        both IPCs (10.18.176.10, 10.18.176.65) and NVRs/DVRs
+        (192.168.10.10) on the network, and the channel-list
+        endpoint differs:
+
+        - **IPC**: ``/ISAPI/Streaming/channels`` returns the
+          streaming channel list (used for snapshot URL
+          ``/Streaming/channels/{id}/picture``).
+        - **NVR / DVR**: ``/ISAPI/ContentMgmt/InputProxy/channels``
+          returns the mounted IPC channel list (used for snapshot
+          URL ``/ContentMgmt/StreamingProxy/channels/{id}/picture``).
+
+        Pre-v0.6.9 we hard-coded the NVR endpoint for all device
+        types. IPCs returned HTTP 403 on the NVR endpoint, leaving
+        the channels list empty for every IPC and no per-channel
+        entities.
+
+        We now fetch deviceInfo first (always succeeds on Hikvision
+        firmware), determine the device type from
+        ``deviceInfo.deviceType``, then choose the right endpoint.
+        Fallbacks handle firmware quirks:
+
+        - IPC: try ``/Streaming/channels``, fall back to
+          ``/ContentMgmt/InputProxy/channels``.
+        - NVR/DVR: try ``/ContentMgmt/InputProxy/channels``, fall
+          back to ``/Streaming/channels``.
+
+        Per-channel status endpoint is similarly chosen from device
+        type (``/Streaming/channels/{id}/status`` for IPC,
+        ``/ContentMgmt/InputProxy/channels/{id}/status`` for NVR/DVR).
+        """
         try:
             async with self._make_client() as client:
-                # Always fetched.
+                # Fetch deviceInfo first so we know which channel-list
+                # endpoint to query.
                 device_info_xml = await client.get_xml(ISAPI_SYSTEM_DEVICE_INFO)
                 status_xml = await client.get_xml(ISAPI_SYSTEM_STATUS)
-                # Channels list — best-effort. Some IPC firmware versions
-                # (verified on 10.18.176.10 / 10.18.176.65 in the user
-                # fleet) return HTTP 403 with empty WWW-Authenticate on
-                # this endpoint even though the same credentials work
-                # for /ISAPI/System/deviceInfo and /ISAPI/System/status.
-                # The v0.6.7 isapi_client falls back to Basic auth when
-                # Digest challenge parsing fails, but if that also fails
-                # we don't want to abort the whole coordinator refresh
-                # — we still want deviceInfo + system_status to reach
-                # HA's sensor platform. Wrap in try/except so a 403 here
-                # becomes empty channels list, not a full refresh
-                # failure that marks every entity unavailable.
+
+                device_info = _parse_device_info(device_info_xml)
+                device_type = normalize_device_type(
+                    device_info.get("deviceType", "")
+                )
+
+                # Pick the right channel-list endpoint(s) for this
+                # device type. We try the "primary" first then fall
+                # back to the alternate in case of firmware that
+                # implements only one.
+                if device_type == DEVICE_TYPE_IPCAMERA:
+                    primary_channels = ISAPI_STREAMING_CHANNELS
+                    alt_channels = ISAPI_INPUT_PROXY_CHANNELS
+                    primary_status_fmt = ISAPI_STREAMING_CHANNELS_STATUS
+                    alt_status_fmt = ISAPI_INPUT_PROXY_CHANNELS_STATUS
+                else:
+                    # NVR or DVR
+                    primary_channels = ISAPI_INPUT_PROXY_CHANNELS
+                    alt_channels = ISAPI_STREAMING_CHANNELS
+                    primary_status_fmt = ISAPI_INPUT_PROXY_CHANNELS_STATUS
+                    alt_status_fmt = ISAPI_STREAMING_CHANNELS_STATUS
+
                 channels_xml: ET.Element | None = None
                 try:
-                    channels_xml = await client.get_xml(
-                        ISAPI_INPUT_PROXY_CHANNELS
-                    )
+                    channels_xml = await client.get_xml(primary_channels)
                 except (ISAPIError, ISAPIAuthError) as exc:
                     _LOGGER.debug(
-                        "InputProxy/channels unavailable on %s: %s — "
-                        "continuing with empty channels list",
-                        self._host, exc,
+                        "Primary channels endpoint %s unavailable on "
+                        "%s (device_type=%s): %s — trying fallback %s",
+                        primary_channels, self._host, device_type,
+                        exc, alt_channels,
                     )
+                    try:
+                        channels_xml = await client.get_xml(alt_channels)
+                    except (ISAPIError, ISAPIAuthError) as exc2:
+                        _LOGGER.debug(
+                            "Fallback channels endpoint %s also "
+                            "unavailable on %s: %s — continuing with "
+                            "empty channels list",
+                            alt_channels, self._host, exc2,
+                        )
                 # Best-effort — some devices (mostly small IPCs) don't
                 # implement these endpoints. We catch the ISAPIError so
                 # a missing endpoint doesn't take down the entire
@@ -597,10 +693,31 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
 
         device_info = _parse_device_info(device_info_xml)
         system_status = _parse_system_status(status_xml)
-        channels = _parse_channels(channels_xml)
+        # Parse channels based on which endpoint returned XML. The two
+        # endpoint response shapes (InputProxyChannel vs StreamingChannel)
+        # differ in wrapper / child element names; we pick the matching
+        # parser. The ``primary_channels`` endpoint tells us which shape
+        # to expect.
+        if channels_xml is not None:
+            # Detect which shape we got by looking at the root tag.
+            root_tag = channels_xml.tag.split("}")[-1]  # strip namespace
+            if root_tag.endswith("StreamingChannelList"):
+                channels = _parse_streaming_channels_list(channels_xml)
+            else:
+                channels = _parse_channels(channels_xml)
+        else:
+            channels = []
         storage = _parse_storage(storage_xml)
         network_interfaces = _parse_network_interfaces(network_xml)
         streaming_bitrate_kbps = _parse_streaming_channels(streaming_xml)
+
+        # v0.6.9 — per-channel status endpoint chosen by device type.
+        # IPCs use /Streaming/channels/{id}/status, NVR/DVRs use
+        # /ContentMgmt/InputProxy/channels/{id}/status.
+        # We determine the right format from device_type (already parsed
+        # above into device_info). Fall back to primary_status_fmt
+        # then alt_status_fmt if one returns ISAPIError.
+        per_ch_status_fmt = primary_status_fmt
 
         # v0.3.0 — enrich each channel with detailed per-channel status
         # (online / recording / motion_detected). Best-effort per
@@ -612,11 +729,37 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
             ch_id = ch.get("id", "")
             if not ch_id:
                 continue
+            status_xml = None
             try:
                 async with self._make_client() as client:
                     status_xml = await client.get_xml(
-                        ISAPI_INPUT_PROXY_CHANNELS_STATUS.format(id=ch_id)
+                        per_ch_status_fmt.format(id=ch_id)
                     )
+            except (ISAPIError, ISAPIAuthError) as exc:
+                # Try the alt status endpoint in case device type
+                # detection was wrong (e.g. deviceType is unknown and
+                # defaulted to ipcamera but it's actually an NVR).
+                if alt_status_fmt != per_ch_status_fmt:
+                    try:
+                        async with self._make_client() as client:
+                            status_xml = await client.get_xml(
+                                alt_status_fmt.format(id=ch_id)
+                            )
+                    except (ISAPIError, ISAPIAuthError) as exc2:
+                        _LOGGER.debug(
+                            "Per-channel status unavailable for "
+                            "%s ch %s: %s / %s",
+                            self._host, ch_id, exc, exc2,
+                        )
+                else:
+                    _LOGGER.debug(
+                        "Per-channel status unavailable for %s "
+                        "ch %s: %s",
+                        self._host, ch_id, exc,
+                    )
+            if status_xml is None:
+                continue
+            try:
                 ch_status = _parse_channel_status_extended(status_xml)
                 # Only override fields that the per-channel endpoint
                 # actually reported (non-default). This way, the
@@ -645,7 +788,7 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                         ch[k] = v
             except ISAPIError as exc:
                 _LOGGER.debug(
-                    "Per-channel status unavailable for %s ch %s: %s",
+                    "Per-channel status parse failed for %s ch %s: %s",
                     self._host, ch_id, exc,
                 )
 
