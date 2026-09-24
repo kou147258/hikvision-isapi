@@ -33,42 +33,47 @@ from custom_components.hikvision_isapi_performance.isapi_client import (
 # ---- Default-port inference ----
 
 
-def test_default_use_https_443_returns_true():
-    """v0.6.10: port 443 → HTTPS by default (most common case)."""
-    assert _default_use_https(443) is True
+def test_default_use_https_always_false():
+    """v0.6.11: port 443 → HTTP by default (was HTTPS in v0.6.10).
 
-
-def test_default_use_https_80_returns_false():
-    """v0.6.10: port 80 → HTTP by default."""
-    assert _default_use_https(80) is False
-
-
-def test_default_use_https_non_standard_returns_false():
-    """v0.6.10: any non-443 port → HTTP default.
-
-    The user can override if their setup uses HTTPS on a non-standard
-    port. The default just gives the most-common-case behavior.
+    Hikvision V5.x firmware serves ISAPI on plain HTTP by default
+    on both port 80 and port 443. The HTTPS-on-443 setup requires
+    explicit enablement in the device's web-server settings.
+    Reference: the community ISAPI integration uses HTTP always
+    (`base_url = f"http://{host}"`).
     """
-    for port in (8080, 8443, 8000, 8001):
+    for port in (80, 443, 8080, 8443, 8000, 8001):
         assert _default_use_https(port) is False, (
             f"port {port} should default to HTTP"
         )
+
+
+def test_default_use_https_independent_of_port():
+    """v0.6.11: scheme defaults to HTTP regardless of port.
+
+    Pre-v0.6.11: port 443 → True (HTTPS), other ports → False.
+    v0.6.11: all ports → False (HTTP). User opts into HTTPS via
+    the config-form checkbox.
+    """
+    assert _default_use_https(80) is False
+    assert _default_use_https(443) is False
+    assert _default_use_https(8080) is False
 
 
 # ---- ISAPIClient URL construction ----
 
 
 def test_isapi_client_builds_https_url_when_use_https_true():
-    """v0.6.10: use_https=True → https:// scheme."""
+    """v0.6.11: use_https=True → https:// scheme (opt-in)."""
     client = ISAPIClient(
         host="10.18.176.10", username="admin", password="pw",
-        use_https=True,
+        port=443, use_https=True,
     )
     assert client.base_url == "https://10.18.176.10:443"
 
 
 def test_isapi_client_builds_http_url_when_use_https_false():
-    """v0.6.10: use_https=False → http:// scheme even on port 443.
+    """v0.6.11: use_https=False → http:// scheme even on port 443.
 
     This is the user's bug case: their Hikvision device serves ISAPI
     over plain HTTP on port 443.
@@ -80,22 +85,22 @@ def test_isapi_client_builds_http_url_when_use_https_false():
     assert client.base_url == "http://10.18.176.10:443"
 
 
-def test_isapi_client_use_https_default_is_true():
-    """v0.6.10: omitting use_https still defaults to HTTPS (back-compat)."""
+def test_isapi_client_use_https_default_is_false():
+    """v0.6.11: omitting use_https defaults to HTTP (was True in v0.6.10)."""
     client = ISAPIClient(
         host="10.18.176.10", username="admin", password="pw",
     )
-    assert client.base_url == "https://10.18.176.10:443"
-    assert client._use_https is True
-
-
-def test_isapi_client_http_on_port_80():
-    """v0.6.10: port 80 + http → http://host:80."""
-    client = ISAPIClient(
-        host="10.18.176.10", username="admin", password="pw",
-        port=80, use_https=False,
-    )
+    # Default port is now 80 (was 443 pre-v0.6.11).
     assert client.base_url == "http://10.18.176.10:80"
+    assert client._use_https is False
+
+
+def test_isapi_client_default_port_changed_to_80():
+    """v0.6.11: port default 443 → 80 (matches the V5.x firmware default)."""
+    client = ISAPIClient(
+        host="10.18.176.10", username="admin", password="pw",
+    )
+    assert client._port == 80
 
 
 # ---- Const + config flow wiring ----

@@ -48,14 +48,16 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _default_use_https(port: int) -> bool:
-    """Pick a sane HTTP/HTTPS default based on port.
+    """Pick a sane HTTP/HTTPS default.
 
-    443 → HTTPS, anything else → HTTP. The user can override per
-    device because some Hikvision firmware serves ISAPI over HTTP
-    on port 443 (a config quirk), and others serve over HTTPS on
-    non-standard ports.
+    v0.6.11: changed to always default to HTTP. Hikvision V5.x
+    firmware serves ISAPI over plain HTTP by default on port 80.
+    HTTPS on port 443 is opt-in via the device's web-server
+    settings — the user has to explicitly enable it. Most HA
+    users have HTTP, not HTTPS. Users with HTTPS-enabled firmware
+    toggle the checkbox on.
     """
-    return port == 443
+    return False
 
 
 # Voluptuous schemas can't reference runtime-computed defaults, so
@@ -68,7 +70,10 @@ USER_SCHEMA = vol.Schema(
         ),
         vol.Required(CONF_USERNAME, default="admin"): str,
         vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_USE_HTTPS): BooleanSelector(),
+        # v0.6.11: both default to False (unchecked). HTTP is the
+        # standard Hikvision ISAPI scheme; SSL verification is off
+        # because most Hikvision devices use self-signed certs.
+        vol.Optional(CONF_USE_HTTPS, default=False): BooleanSelector(),
         vol.Optional(CONF_VERIFY_SSL, default=False): BooleanSelector(),
     }
 )

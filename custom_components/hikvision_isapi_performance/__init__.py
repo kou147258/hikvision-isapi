@@ -46,7 +46,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
         verify_ssl=entry.data.get(CONF_VERIFY_SSL, False),
-        use_https=entry.data.get(CONF_USE_HTTPS, True),
+        # v0.6.11: default to HTTP (False). Hikvision ISAPI is HTTP
+        # by default; HTTPS is opt-in via the device's web-server
+        # settings. Users who explicitly set use_https=True (e.g. for
+        # firmware with HTTPS enabled) keep their setting.
+        use_https=entry.data.get(CONF_USE_HTTPS, False),
         scan_interval=entry.options.get(
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         ),

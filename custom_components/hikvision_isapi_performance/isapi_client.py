@@ -182,9 +182,9 @@ class ISAPIClient:
         username: str,
         password: str,
         *,
-        port: int = 443,
+        port: int = 80,
         verify_ssl: bool = False,
-        use_https: bool = True,
+        use_https: bool = False,
         timeout: float = 10.0,
     ) -> None:
         self._host = host

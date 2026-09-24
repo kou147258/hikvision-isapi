@@ -9,7 +9,11 @@ MANUFACTURER: Final = "Hikvision"
 
 # ---- Polling defaults ----
 
-DEFAULT_PORT: Final = 443
+# v0.6.11: changed default port 443 → 80. Most V5.x firmware serves
+# ISAPI on plain HTTP at 80 by default; 443 + HTTPS is opt-in via the
+# device's web-server settings. Users who already have it working on
+# 443 + HTTPS can re-configure (the value is persisted per-entry).
+DEFAULT_PORT: Final = 80
 DEFAULT_SCAN_INTERVAL: Final = 30  # seconds
 MIN_SCAN_INTERVAL: Final = 5
 MAX_SCAN_INTERVAL: Final = 300
