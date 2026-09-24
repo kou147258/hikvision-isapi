@@ -18,6 +18,7 @@ from custom_components.hikvision_isapi.coordinator import (
     _parse_storage,
     _parse_streaming_channels,
     _parse_system_status,
+    normalize_device_type,
 )
 from custom_components.hikvision_isapi.isapi_client import (
     _build_digest_header,
@@ -412,3 +413,30 @@ def test_parse_channel_status_handles_partial_xml():
     assert status["online"] is True
     assert status["recording"] is False  # missing field defaults to False
     assert status["motion_detected"] is False
+
+
+# ---- v0.4.0 — NVR / IPC device-type normalization ----
+
+
+def test_normalize_device_type_ipcamera_variants():
+    """`IPCamera` / `ipc` / mixed case → canonical `ipcamera`."""
+    for raw in ("IPCamera", "ipcamera", "IPC", "IpC", " ipc "):
+        assert normalize_device_type(raw) == "ipcamera"
+
+
+def test_normalize_device_type_nvr_variants():
+    """`NetworkVideoRecorder` / `nvr` → `networkvideorecorder`."""
+    for raw in ("NetworkVideoRecorder", "nvr", "NVR", "NetworkVideoRecorder "):
+        assert normalize_device_type(raw) == "networkvideorecorder"
+
+
+def test_normalize_device_type_dvr_variants():
+    assert normalize_device_type("DVR") == "dvr"
+    assert normalize_device_type("DigitalVideoRecorder") == "dvr"
+
+
+def test_normalize_device_type_defaults_to_ipcamera():
+    """Unknown / empty / None defaults to `ipcamera` (most devices are IPC)."""
+    assert normalize_device_type("") == "ipcamera"
+    assert normalize_device_type("UnknownType") == "ipcamera"
+    assert normalize_device_type(None) == "ipcamera"

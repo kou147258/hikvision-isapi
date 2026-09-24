@@ -1,15 +1,27 @@
 """Camera platform for Hikvision ISAPI.
 
 Each detected channel becomes one ``Camera`` entity that streams a
-single ``/ISAPI/Streaming/channels/{id}/picture`` request to HA's
-camera component. The HA frontend uses the returned bytes to display
-a still image (refreshed by the camera component's standard
-``async_camera_image`` polling).
+single JPEG request to HA's camera component. The HA frontend uses
+the returned bytes to display a still image (refreshed by the
+camera component's standard ``async_camera_image`` polling).
 
-A future v0.2 release can add a continuous MJPEG stream via
-``/ISAPI/Streaming/channels/{id}/httppreview`` for live video, but
-HA's built-in camera component only supports still images so that's
-out of scope here.
+The snapshot endpoint differs by device type:
+
+- **IPC** (``deviceType=IPCamera``) — ``/ISAPI/Streaming/channels/{id}/picture``
+  on the device itself.
+- **NVR / DVR** (``deviceType=NetworkVideoRecorder`` / ``DVR``) — IPC
+  channels are mounted on the NVR, not local. The NVR-side proxy
+  endpoint ``/ISAPI/ContentMgmt/StreamingProxy/channels/{id}/picture``
+  returns the same JPEG. Using the IPC endpoint on an NVR returns
+  HTTP 400 (verified against DS-7708-I4 / DS-8632-I8 in the user
+  fleet).
+
+The device type comes from the coordinator's normalized
+``device_type`` field (``ipcamera`` / ``networkvideorecorder`` /
+``dvr``). A future v0.2+ release can add a continuous MJPEG stream
+via ``/ISAPI/Streaming/channels/{id}/httppreview`` for live video,
+but HA's built-in camera component only supports still images so
+that's out of scope here.
 """
 
 from __future__ import annotations
@@ -23,7 +35,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ISAPI_STREAMING_CHANNELS
+from .const import (
+    DEVICE_TYPE_NETWORK_VIDEO_RECORDER,
+    DOMAIN,
+    ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS_PICTURE,
+    ISAPI_STREAMING_CHANNELS,
+)
 from .coordinator import HikvisionISAPICoordinator
 from .isapi_client import ISAPIConnectionError, ISAPIClient, ISAPIError
 
@@ -111,15 +128,33 @@ class HikvisionISAPICamera(CoordinatorEntity[HikvisionISAPICoordinator], Camera)
         width: int | None = None,
         height: int | None = None,
     ) -> bytes | None:
-        """Return a single still frame from ``/ISAPI/Streaming/channels/{id}/picture``.
+        """Return a single still frame from the device's snapshot endpoint.
 
-        Hikvision's ``/picture`` endpoint ignores ``width`` / ``height``
-        parameters and returns the full-resolution JPEG; the HA frontend
-        scales it to fit the card. We forward ``width`` / ``height`` via
-        query string for documentation only.
+        Endpoint is chosen by ``coordinator.data.device_type``:
+        - IPC → ``/ISAPI/Streaming/channels/{id}/picture`` (direct)
+        - NVR / DVR → ``/ISAPI/ContentMgmt/StreamingProxy/channels/{id}/picture``
+          (NVR-side proxy that grabs a snapshot of the mounted IPC
+          channel — the IPC endpoint returns 400 on NVRs)
+
+        Hikvision's ``/picture`` endpoint ignores ``width`` /
+        ``height`` parameters and returns the full-resolution JPEG; the
+        HA frontend scales it to fit the card. We forward
+        ``width`` / ``height`` via query string for documentation only.
         """
         coordinator: HikvisionISAPICoordinator = self.coordinator
-        path = f"{ISAPI_STREAMING_CHANNELS}/{self.channel_id}/picture"
+        if coordinator.data is None:
+            return None
+        device_type = coordinator.data.device_type
+        if device_type == DEVICE_TYPE_NETWORK_VIDEO_RECORDER:
+            # NVR — use the proxy endpoint to grab a snapshot of a
+            # mounted IPC channel.
+            path = (
+                f"{ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS_PICTURE}"
+                f".format(id={self.channel_id})"
+            )
+        else:
+            # IPC / DVR — direct local endpoint.
+            path = f"{ISAPI_STREAMING_CHANNELS}/{self.channel_id}/picture"
         # Add width / height query params for documentation; Hikvision
         # ignores them but third-party integrators might check.
         if width or height:

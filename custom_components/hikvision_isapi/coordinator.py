@@ -53,15 +53,20 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
+    DEVICE_TYPE_DVR,
+    DEVICE_TYPE_IPCAMERA,
+    DEVICE_TYPE_NETWORK_VIDEO_RECORDER,
     DOMAIN,
     ISAPI_CONTENT_MGMT_HDD,
     ISAPI_CONTENT_MGMT_STORAGE,
+    ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS,
     ISAPI_INPUT_PROXY_CHANNELS,
     ISAPI_INPUT_PROXY_CHANNELS_STATUS,
     ISAPI_STREAMING_CHANNELS,
     ISAPI_SYSTEM_DEVICE_INFO,
     ISAPI_SYSTEM_NETWORK_INTERFACES,
     ISAPI_SYSTEM_STATUS,
+    ISAPI_SYSTEM_STORAGE_HARDDISKS,
 )
 from .isapi_client import ISAPIConnectionError, ISAPIClient, ISAPIError
 
@@ -94,6 +99,25 @@ def _parse_device_info(root: ET.Element | None) -> dict[str, str]:
         "macAddress": _xml_text(root, "macAddress") or "",
         "manufacturer": "Hikvision",
     }
+
+
+def normalize_device_type(raw: str) -> str:
+    """Map ``deviceInfo.deviceType`` to one of the canonical DEVICE_TYPE_*.
+
+    Hikvision's ``deviceType`` field is free-form text — common
+    values are ``IPCamera``, ``NetworkVideoRecorder``, ``DVR``,
+    ``ipc``, ``nvr``, ``dvr`` (any case). The path selection in
+    ``camera.py`` depends on the canonical IPCamera / NVR / DVR
+    mapping; everything else (unknown / empty) defaults to IPCamera
+    since the user fleet is mostly IPC.
+    """
+    s = (raw or "").strip().lower()
+    if s in {"nvr", "networkvideorecorder"}:
+        return DEVICE_TYPE_NETWORK_VIDEO_RECORDER
+    if s in {"dvr", "digitalvideorecorder"}:
+        return DEVICE_TYPE_DVR
+    # Default to IPC for "ipcamera", "ipc", "" or anything unknown.
+    return DEVICE_TYPE_IPCAMERA
 
 
 def _parse_system_status(root: ET.Element | None) -> dict[str, str]:
@@ -291,6 +315,11 @@ class HikvisionISAPIData:
         streaming_bitrate_kbps: dict[str, int] | None = None,
     ) -> None:
         self.device_info = device_info
+        # Normalized device type: "ipcamera" / "networkvideorecorder" /
+        # "dvr". Used by camera.py to route the snapshot endpoint.
+        self.device_type: str = normalize_device_type(
+            device_info.get("deviceType", "")
+        )
         self.system_status = system_status
         self.channels = channels
         self.capabilities = capabilities
@@ -376,10 +405,31 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
                         ISAPI_CONTENT_MGMT_STORAGE
                     )
                 except ISAPIError as exc:
-                    _LOGGER.debug(
-                        "Storage endpoint unavailable on %s: %s",
-                        self._host, exc,
-                    )
+                    # Old V4 NVRs (DS-7708-I4, DS-8632-I8, etc.) don't
+                    # implement /ContentMgmt/storage. Fall back to the
+                    # legacy /System/Storage/hardDisks endpoint that
+                    # these firmwares do expose.
+                    if exc.status_code == 404:
+                        _LOGGER.debug(
+                            "ContentMgmt/storage not supported on %s, "
+                            "falling back to System/Storage/hardDisks",
+                            self._host,
+                        )
+                        try:
+                            storage_xml = await client.get_xml(
+                                ISAPI_SYSTEM_STORAGE_HARDDISKS
+                            )
+                        except ISAPIError as exc2:
+                            _LOGGER.debug(
+                                "System/Storage/hardDisks also unavailable "
+                                "on %s: %s",
+                                self._host, exc2,
+                            )
+                    else:
+                        _LOGGER.debug(
+                            "Storage endpoint unavailable on %s: %s",
+                            self._host, exc,
+                        )
                 network_xml: ET.Element | None = None
                 try:
                     network_xml = await client.get_xml(
@@ -458,6 +508,9 @@ class HikvisionISAPICoordinator(DataUpdateCoordinator[HikvisionISAPIData]):
 
         # Cache the parsed fields for downstream platforms.
         self.device_info = device_info
+        self.device_type = normalize_device_type(
+            device_info.get("deviceType", "")
+        )
         self.system_status = system_status
         self.channels = channels
         self.capabilities = capabilities

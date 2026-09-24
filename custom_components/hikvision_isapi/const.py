@@ -46,6 +46,26 @@ ISAPI_INPUT_PROXY_CHANNELS_STATUS: Final = (
     "/ISAPI/ContentMgmt/InputProxy/channels/{id}/status"
 )
 ISAPI_STREAMING_CHANNELS: Final = "/ISAPI/Streaming/channels"
+# NVR-side: proxy endpoint to grab a snapshot of a mounted IPC
+# channel. IPC's own /Streaming/channels/{id}/picture returns
+# HTTP 400 on NVRs (verified against DS-7708-I4 / DS-8632-I8 in
+# the user fleet). Use this proxy endpoint on NVRs.
+ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS: Final = (
+    "/ISAPI/ContentMgmt/StreamingProxy/channels"
+)
+ISAPI_CONTENT_MGMT_STREAMING_PROXY_CHANNELS_PICTURE: Final = (
+    "/ISAPI/ContentMgmt/StreamingProxy/channels/{id}/picture"
+)
+
+# Storage (NVR / DVR) — Hikvision has TWO storage endpoints
+ISAPI_CONTENT_MGMT_STORAGE: Final = "/ISAPI/ContentMgmt/storage"
+# Old V4 NVRs (DS-7708-I4 / DS-8632-I8) don't implement
+# /ContentMgmt/storage; they only expose the legacy
+# /System/Storage/hardDisks. We try ContentMgmt first, fall
+# back to System on 404.
+ISAPI_SYSTEM_STORAGE_HARDDISKS: Final = (
+    "/ISAPI/System/Storage/hardDisks"
+)
 
 # Storage (NVR / DVR)
 ISAPI_CONTENT_MGMT_STORAGE: Final = "/ISAPI/ContentMgmt/storage"
@@ -64,3 +84,12 @@ ISAPI_PTZ_CTRL_CHANNELS: Final = "/ISAPI/PTZCtrl/channels"
 CAP_PTZ: Final = "PTZ"
 CAP_VIDEO_INPUT: Final = "videoInput"
 CAP_INGRESS_ALARM: Final = "ingressAlarm"
+
+# ---- Device type strings returned by deviceInfo.deviceType ----
+# Used to route snapshot / recording endpoints to the right path
+# (IPC → /Streaming/channels/..., NVR → /ContentMgmt/InputProxy/...
+# for the channel list, /ContentMgmt/StreamingProxy/... for the
+# snapshot of a mounted IPC).
+DEVICE_TYPE_IPCAMERA: Final = "ipcamera"
+DEVICE_TYPE_NETWORK_VIDEO_RECORDER: Final = "networkvideorecorder"
+DEVICE_TYPE_DVR: Final = "dvr"

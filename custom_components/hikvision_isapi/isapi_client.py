@@ -44,6 +44,10 @@ _LOGGER = logging.getLogger(__name__)
 class ISAPIAuthError(Exception):
     """Raised when the device rejects our credentials (HTTP 401/403)."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class ISAPIConnectionError(Exception):
     """Raised on network / TLS / timeout failures."""
@@ -51,6 +55,10 @@ class ISAPIConnectionError(Exception):
 
 class ISAPIError(Exception):
     """Generic ISAPI failure (HTTP 4xx/5xx other than auth, parse errors)."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _parse_digest_challenge(www_authenticate: str) -> dict[str, str] | None:
@@ -267,7 +275,8 @@ class ISAPIClient:
             if challenge is None:
                 raise ISAPIAuthError(
                     f"HTTP {resp.status} on {resp.url}: "
-                    f"unrecognized WWW-Authenticate: {www_auth[:120]}"
+                    f"unrecognized WWW-Authenticate: {www_auth[:120]}",
+                    status_code=resp.status,
                 )
             auth_header = _build_digest_header(
                 self._username, self._password, method, path, challenge
@@ -289,7 +298,10 @@ class ISAPIClient:
                 raise ISAPIConnectionError(str(exc)) from exc
         if resp.status >= 400:
             body = await resp.text()
-            raise ISAPIError(f"HTTP {resp.status} on {resp.url}: {body[:200]}")
+            raise ISAPIError(
+                f"HTTP {resp.status} on {resp.url}: {body[:200]}",
+                status_code=resp.status,
+            )
         return await resp.text()
 
     async def _read_response_bytes(
@@ -302,7 +314,8 @@ class ISAPIClient:
             if challenge is None:
                 raise ISAPIAuthError(
                     f"HTTP {resp.status} on {resp.url}: "
-                    f"unrecognized WWW-Authenticate: {www_auth[:120]}"
+                    f"unrecognized WWW-Authenticate: {www_auth[:120]}",
+                    status_code=resp.status,
                 )
             auth_header = _build_digest_header(
                 self._username, self._password, "GET", path, challenge
@@ -314,12 +327,14 @@ class ISAPIClient:
                 ) as retry_resp:
                     if retry_resp.status in (401, 403):
                         raise ISAPIAuthError(
-                            f"HTTP {retry_resp.status} on {retry_resp.url} after auth"
+                            f"HTTP {retry_resp.status} on {retry_resp.url} after auth",
+                            status_code=retry_resp.status,
                         )
                     if retry_resp.status >= 400:
                         body = await retry_resp.text()
                         raise ISAPIError(
-                            f"HTTP {retry_resp.status} on {retry_resp.url}: {body[:200]}"
+                            f"HTTP {retry_resp.status} on {retry_resp.url}: {body[:200]}",
+                            status_code=retry_resp.status,
                         )
                     return await retry_resp.read()
             except ISAPIAuthError:
@@ -328,5 +343,8 @@ class ISAPIClient:
                 raise ISAPIConnectionError(str(exc)) from exc
         if resp.status >= 400:
             body = await resp.text()
-            raise ISAPIError(f"HTTP {resp.status} on {resp.url}: {body[:200]}")
+            raise ISAPIError(
+                f"HTTP {resp.status} on {resp.url}: {body[:200]}",
+                status_code=resp.status,
+            )
         return await resp.read()
